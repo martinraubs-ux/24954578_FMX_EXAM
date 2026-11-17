@@ -47,6 +47,9 @@ Factor_Scores <- read_rds("data/Factor_Scores.rds")
 
 # Stock returns
 Stock_returns_daily <- read_rds("data/Stock_Returns_Daily.rds")
+
+Bond_Yields <- read_rds("data/Global_Bond_Yields.rds")
+LCL_Yield_Proxies <- read_rds("data/Monthly_LCL_Yield_Indexes.rds")
 ```
 
 ### How has global volatility increased
@@ -593,10 +596,30 @@ ggsave("figures/macro_drivers_plot.png", macro_drivers_plot)
 
 # Question 4
 ```{r}
-#write_csv(div_w_PC_return_mat,"data/div_w_PC_return_mat.csv")
+Q4_data <- 
+              # MSCI
+              MSCI %>% select(date, Ticker, TRI) %>% 
+  
+              # Vanilla
+              bind_rows(Idx_Daily %>%  filter(Tickers %in% c("STXMOMJ433", 
+                                                             "STXVALJ433"
+                                                             ,"J200"
+                                                             ,"J201")) %>% 
+                                           select(date, Tickers, Returns) ) %>% 
+  
+              # 10Y bonds
+              bind_rows(Bond_Yields %>% mutate(TRI = ,
+                                               Returns = )) %>% 
+                                        select(date, Tickers, Returns) %>% 
+              # LCL
+              bind_rows(LCL_Yield_Proxies %>% select(-Name)) %>% 
+  
+              # Commodoties
+              bind_rows(Commods)
+   
 
 return_mat <- bind_rows(SPX,
-            LSTA_3,
+            LSTA_3, 
             CELFX,
             US_REIT,
             US_COM,
@@ -632,10 +655,40 @@ order
 
 gamma_List <- seq(0,150,by = 0.1) %>% as.list()
 
-Amat <- cbind(rep(1,11),diag(1,11,11),diag(-1,11,11))
+################
+# Constraints
+N <- length(tickers)
 
-bvec <- c(1, rep(0.02, 11), -0.15, rep(-0.5, 10))
-bvec
+# Define which tickers belong to each group (adjust to match your actual ticker names)
+is_bond   <- as.numeric(tickers %in% bond_tickers)     # 1 if Bond/Credit, 0 otherwise
+is_equity <- as.numeric(tickers %in% equity_tickers)   # 1 if Equity, 0 otherwise
+is_comm   <- as.numeric(tickers %in% comm_tickers)     # 1 if Commodity, 0 otherwise
+is_global <- as.numeric(tickers %in% global_tickers)   # 1 if Global asset, 0 otherwise
+
+# 1. Full Investment Constraint (sum of weights == 1) -> must be the FIRST column(s) when meq = 1
+A_eq <- matrix(1, nrow = N, ncol = 1)
+b_eq <- 1
+
+# 2. Long-Only Lower Bounds (w_i >= 0)
+A_lb <- diag(N)
+b_lb <- rep(0, N)
+
+# 3. Single-Asset Upper Bounds (w_i <= 0.35  -->  -w_i >= -0.35)
+A_ub <- -diag(N)
+b_ub <- rep(-0.35, N)
+
+# 4. Group Upper Bounds (sum(w_group) <= limit  -->  -sum(w_group) >= -limit)
+A_grp <- cbind(
+  -is_bond,    # Bonds & Credit <= 25%
+  -is_equity,  # Equities <= 75%
+  -is_comm,    # Commodities <= 15%
+  -is_global   # Global Exposure <= 60%
+)
+b_grp <- c(-0.25, -0.75, -0.15, -0.60)
+
+# Combine all constraints (assets = rows, constraints = columns)
+Amat <- cbind(A_eq, A_lb, A_ub, A_grp)
+bvec <- c(b_eq, b_lb, b_ub, b_grp)
 
 ```
 
