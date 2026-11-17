@@ -1,0 +1,641 @@
+---
+title: "README"
+author: "Martin Raubenheimer"
+date: "2026-11-17"
+output: github_document
+---
+
+```{r, include=FALSE}
+rm(list = ls()) # Clean your environment:
+gc() # garbage collection - It can be useful to call gc after a large object has been removed, as this may prompt R to return memory to the operating system.
+library(tidyverse)
+list.files('./code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+list.files('Questions/Question 1/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+```
+```{r Libraries, include=FALSE}
+pacman::p_load(PerformanceAnalytics, tidyverse, rmsfuns, tbl2xts, rugarch, kableExtra, fredr,
+               scales,MTS, rmgarch, ggthemes)
+```
+
+# Question 1
+
+
+## PART A
+```{r , loading data}
+# Economic policy uncertainty indexes:
+Uncertainty_Indexes <- "data/Econ_Uncertainty_Indexes.rds" %>% read_rds()
+# Implied volatility indexes:
+Implied_Vol <- "data/Implied_Vol_Indexes.rds" %>% read_rds()
+# Index Constituents:
+Local_Index_Constituents <- "data/Index_Constituents.rds" %>% read_rds()
+
+Idx_Daily <- read_rds("data/Index_Returns_Daily.rds")
+# Currency Vol Indexes:
+Local_Cncy_Vol_Index <- read_rds("data/LCL_Currency_Vol_Index.rds")
+Gl_Cncy_Vol_Index <- read_rds("data/Global_Currency_Vol_Index.rds")
+# Commodities:
+Commods <- read_rds("data/Commodities.rds")
+# MSCI
+MSCI <- read_rds("data/MSCI_Indexes.rds")
+
+## PART B
+# Holdings of your firms managed portfolio:
+SafeCore <- read_rds("data/SafeCore.rds")
+# Factor Scores per constituent: lower values mean a lower score to the factor.
+# E.g. Value of -2 means an expensive stock.
+Factor_Scores <- read_rds("data/Factor_Scores.rds")
+
+# Stock returns
+Stock_returns_daily <- read_rds("data/Stock_Returns_Daily.rds")
+```
+
+### How has global volatility increased
+
+```{r} 
+Implied_Vol_Plot <-  Implied_Vol %>% mutate(Ticker = gsub(" Index","",Ticker)) %>% 
+  
+  ggplot(aes(x = date, y = TRI, color = Ticker)) +
+  geom_line(linewidth = 0.8) +
+  scale_color_manual(values = c(
+    "VIX" = "#1f77b4", 
+    "V2X" = "#ff7f0e", 
+    "VXEEM" = "#2ca02c"
+  )) +
+  labs(
+    title = "Daily Implied Volatility Indices",
+    subtitle = "Global Comparison across US, Europe and EM's",
+    x = "Date",
+    y = "Index",
+    color = "Ticker"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "top"
+  )
+  Implied_Vol_Plot
+```
+
+Firstly we see that the 
+three implied volatility indices move relatively close together across the entire sample period. 
+Secondly, there is a spike in the begining of 2026, which was significantly larger in the EM space than for the US and Europe. Despite the spike the inidices appears to be relatively close to their long term average. Definitely less than GFC to about 2013 and Covid time periods.
+
+### Absolute returns plot 
+```{r}
+abs_return_plot <- Idx_Daily %>% 
+
+           # Calculating absolute returns from Returns
+             mutate(abs_rets = abs(Returns)) %>%
+             slice(-1) %>%
+    
+              ggplot(aes(x = date, y = Returns)) +
+              geom_line(linewidth = 0.8) +
+              facet_wrap("Tickers", scales = "free_y") +
+              labs(
+              title = "Daily Implied Volatility Indices",
+              subtitle = "Global Comparison across US, Europe and EM's",
+              x = "Date",
+              y = "Index",
+              color = "Ticker"  ) +
+              theme_minimal() +
+              theme(
+              plot.title = element_text(face = "bold", size = 14),
+              legend.position = "top")
+               
+abs_return_plot
+```
+
+### Rolling SD 
+
+```{r, warning=FALSE}
+rolling_sd_plot <- calc_rolling_sd(Idx_Daily, n = 120, annualize = TRUE) %>% 
+  
+   ggplot(aes(x = date, y = annualized_vol, colour = Tickers)) +
+              geom_line(linewidth = 0.8) +
+              labs(
+              title = "How has volatility increased in SA stock markets",
+              subtitle = "4 Month rolling standard deiation covenrted in annualised SD",
+              x = "Date",
+              y = "Annualised Volatility (%) ",
+              color = "Ticker"  ) +
+              theme_minimal() +
+              theme(
+              plot.title = element_text(face = "bold", size = 14),
+              legend.position = "top")
+               
+rolling_sd_plot
+          
+          Local_Index_Constituents %>% group_by(Index)
+
+
+```
+
+### rmgarch FOR SPILLOVERS
+Doing GARCH between MSCI INDEXES and Capped SWIX
+```{r}
+# DCC_GARCH data
+MSCIgarch_data <-  MSCI %>% filter(Name %in% c("MSCI_USA", "MSCI_EU", "MSCI China", "MSCI_Jap"),
+                               date >= "2015-01-02") %>% 
+            arrange(Name, date) %>%
+              group_by(Name) %>% 
+                mutate( Returns = (TRI-lag(TRI))/lag(TRI),
+                        Tickers = Ticker) %>% 
+                    select(c(date, Returns, Name)) %>% 
+                      bind_rows(Idx_Daily %>% filter(Tickers %in% "J433")) %>% 
+                      group_by(Name) %>% 
+                        mutate(lret = log(1+Returns)) %>%
+                          select(-Tickers,Returns) %>% 
+                              tbl_xts(cols_to_xts = lret, spread_by = Name) %>% na.omit
+
+#Portanmaue test
+MarchTest(MSCIgarch_data)
+```
+
+
+```{r}
+# dccPre fits the univariate GARCH models to each series in our data frame of returns.
+# Let's select a VAR order of zero for the mean equation, and simply use the mean of each series.
+# The mean equation is thus in our case simply: Rtn_t = mean(R) + et
+
+# Then, for every series, a standard univariate GARCH(1,1) is run - giving us:
+# et and sigmat, which is then used to calculate the standardized resids, zt, which is used in DCC calcs after.
+
+MSCIgarch_pct <- MSCIgarch_data * 100
+
+DCCPre <- dccPre(MSCIgarch_pct, include.mean = TRUE, p = 0)
+
+# Making vol useabale xts
+Vol <- DCCPre$marVol
+colnames(Vol) <- colnames(MSCIgarch_data)
+Vol_xts <- xts(Vol, order.by = index(MSCIgarch_data))
+
+```
+```{r}
+StdRes <- DCCPre$sresi
+detach("package:tidyverse", unload=TRUE)
+detach("package:tbl2xts", unload=TRUE)
+DCC <- dccFit(StdRes, type="Engle")
+pacman::p_load("tidyverse", "tbl2xts", "broom")
+```
+
+```{r}
+Rhot <- DCC$rho.t
+# Right, so it gives us all the columns together in the form:
+# X1,X1 ; X1,X2 ; X1,X3 ; ....
+
+# So, let's be clever about defining more informative col names. 
+# I will create a renaming function below:
+ReturnSeries = MSCIgarch_data
+DCC.TV.Cor = Rhot
+
+# Let's see if our function works! Excitement!
+Rhot <- 
+  renamingdcc(ReturnSeries = MSCIgarch_data, DCC.TV.Cor = Rhot)
+
+head(Rhot %>% arrange(date))
+```
+
+FINALLY THE PLOTS
+```{r}
+g1 <- 
+  ggplot(Rhot %>% filter(grepl("Capped.SWIX_", Pairs ), !grepl("_Capped.SWIX", Pairs)) ) + 
+  geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  theme_hc() +
+  ggtitle("Dynamic Conditional Correlations: Capped_SWIX")
+
+g1
+ggsave("figures/g1.png", g1)
+```
+
+
+## Part B
+
+### Doing PCA to obtain main sources of portfolio volatility
+
+
+```{r}
+# Daily returns for every stock the fund has held:
+ fund_tickers <- SafeCore %>% distinct(Tickers) %>% pull(Tickers)
+
+ data_wide <-
+   Stock_returns_daily %>%
+   select(date, Tickers, Returns) %>%
+   filter(Tickers %in% fund_tickers, date >= min(SafeCore$date)) %>%
+   spread(Tickers, Returns)
+
+# Single snapshot: weights at the latest rebalance, covariance from the 250 days ending then:
+ w_date <- max(SafeCore$date)
+ w <- SafeCore %>% filter(date == w_date) %>% select(Tickers, Weight) %>% tibble::deframe()
+ win <- data_wide %>% filter(date <= w_date) %>% tail(250)
+ rc <- Risk_Concentration(win, w, universe = "held")
+ rc$port_vol * sqrt(252)   # annualised volatility (daily data)
+ rc$stock_rc               # which stocks drive the volatility
+ rc$pc_rc                  # which statistical factors drive the volatility
+ rc$ENB                    # effective number of independent bets
+```
+
+
+
+```{r}
+
+# Rolling, with monthly rebalanced weights:
+ roll <- Roll_Risk_Concentration(data_wide, SafeCore, lookback = 250, step = 5, n_pcs = 3)
+
+ roll %>%
+   ggplot() + geom_line(aes(date, ENB)) +
+   labs(title = "SafeCore: Effective Number of Bets", x = "", y = "ENB") +
+   fmxdat::theme_fmx()
+
+ roll %>%
+   pivot_longer(ends_with("_Share"), names_to = "PC", values_to = "Share") %>%
+   ggplot() + geom_line(aes(date, Share, color = PC)) +
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+   labs(title = "SafeCore: Share of Variance by Principal Component", x = "") +
+   fmxdat::theme_fmx() + fmxdat::fmx_cols()
+```
+
+```{r}
+# FactoMineR / factoextra plots for the same snapshot:
+ res_fm <- FM_PCA_Portfolio(win, w, scale. = TRUE, universe = "held")
+
+ fviz_screeplot(res_fm, ncp = 10)                           # variance explained
+ fviz_pca_var(res_fm, col.var = "contrib", repel = TRUE)    # stock map; portfolio shown as supplementary
+ fviz_contrib(res_fm, choice = "var", axes = 1)             # stocks contributing most to PC1
+ res_fm$quanti.sup$cor                                       #portfolio correlation with each PC
+
+ #The risk-share by PC from rc itself (not FactoMineR):
+ rc$pc_rc %>% slice(1:10) %>%
+   ggplot() + geom_col(aes(PC, Share), fill = "steelblue") +
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+   labs(title = "Share of portfolio variance by PC", x = "", y = "") + fmxdat::theme_fmx()
+
+```
+
+###  Did SafeCore navigate volatility well? 
+Creating Fin stats table to analyse how well safe core handled volatility
+```{r}
+# Envisaged parameters:
+
+BM <- "Bench"
+Yrs_LookBack <- 5
+NA_Check <- 0.8  # atleast 80% of obs not-NA.
+```
+
+```{r}
+pacman::p_load("tidyverse", "lubridate", "tbl2xts", "PerformanceAnalytics", "rmsfuns")
+
+ann <- 252     # trading days per year
+
+# ---------------------------------------------------------------
+# 1. Benchmark: Capped SWIX (J433) daily returns
+# ---------------------------------------------------------------
+# Check the ticker label in your index file:
+Bench_returns <-
+  Idx_Daily %>%
+  filter(Tickers == "J433") %>%
+  arrange(date) %>%
+  mutate(Mkt = Returns) %>%
+  filter(!is.na(Mkt)) %>%
+  select(date, Mkt)
+# ---------------------------------------------------------------
+# 2. Daily stock returns, wide (dates x stocks), for stocks the fund has held
+# ---------------------------------------------------------------
+fund_tickers <- SafeCore %>% distinct(Tickers) %>% pull(Tickers)
+
+R_xts <-
+  Stock_returns_daily %>%
+  filter(Tickers %in% fund_tickers) %>%
+  select(date, Tickers, Returns) %>%
+  tbl_xts(cols_to_xts = Returns, spread_by = Tickers)
+
+# No return recorded (e.g. suspended / not yet listed) = 0 return:
+R_xts[is.na(R_xts)] <- 0
+
+
+# ---------------------------------------------------------------
+# 3. Monthly weights, wide, stamped with the first trading day they apply
+# ---------------------------------------------------------------
+# Safe_Return.portfolio makes weights effective on the date they are stamped. SafeCore's
+# weights are set at the month-end close, so stamp them with the NEXT trading day:
+trading_days <- index(R_xts)
+
+reb <-
+  SafeCore %>%
+  distinct(date) %>%
+  mutate(idx = findInterval(as.numeric(date), as.numeric(trading_days)),   # last trading day on or before
+         trade_date = trading_days[idx + 1]) %>%                            # next trading day (NA if none)
+  filter(!is.na(trade_date)) %>%
+  select(date, trade_date)
+
+W_xts <-
+  SafeCore %>%
+  inner_join(reb, by = "date") %>%
+  select(date = trade_date, Tickers, Weight) %>%
+  tbl_xts(cols_to_xts = Weight, spread_by = Tickers)
+
+# A stock the fund does not hold in a given month has weight 0 (not NA):
+W_xts[is.na(W_xts)] <- 0
+
+# Same stocks, same column order in both objects (Safe_Return.portfolio requires this):
+common <- intersect(colnames(R_xts), colnames(W_xts))
+R_xts <- R_xts[, common]
+W_xts <- W_xts[, common]
+
+# Each row sums to 1 (also guards against weights stored in percent):
+W_xts <- W_xts / rowSums(W_xts)
+
+# ---------------------------------------------------------------
+# 4. SafeCore daily returns: weights set at each rebalance, then left to drift
+# ---------------------------------------------------------------
+Fund_ret <-
+  rmsfuns::Safe_Return.portfolio(R = R_xts[index(R_xts) >= min(index(W_xts)), ],
+                                 weights = W_xts,
+                                 lag_weights = TRUE,
+                                 geometric = TRUE) %>%
+  xts_tbl() %>%
+  rename(Returns = portfolio.returns) %>%
+  mutate(Tickers = "SafeCore")
+
+Stats_data <-
+  bind_rows(Fund_ret,
+            Bench_returns %>%
+              filter(date >= min(Fund_ret$date)) %>%
+              transmute(date, Tickers = "Capped_SWIX", Returns = Mkt)) %>%
+  select(date, Tickers, Returns)
+
+# Wide xts, common dates only:
+Ret_xts <- Stats_data %>% tbl_xts(cols_to_xts = Returns, spread_by = Tickers) %>% na.omit()
+
+# Quick checks:
+# range(rowSums(W_xts))                                    # should be 1
+# Stats_data %>% group_by(Tickers) %>% summarise(n = n(), first = min(date), last = max(date))
+
+# ---------------------------------------------------------------
+# 5. Financial statistics table
+# ---------------------------------------------------------------
+stat_col <- function(r) {
+  c("Annualised Return (%)"          = as.numeric(Return.annualized(r, scale = ann, geometric = TRUE)) * 100,
+    "Annualised Volatility (%)"      = as.numeric(StdDev.annualized(r, scale = ann)) * 100,
+    "Return / Volatility"            = as.numeric(Return.annualized(r, scale = ann, geometric = TRUE)) /
+                                       as.numeric(StdDev.annualized(r, scale = ann)),   # risk-free rate ignored
+    "Skewness"                       = as.numeric(skewness(r)),
+    "Excess Kurtosis"                = as.numeric(kurtosis(r, method = "excess")),
+    "Max Drawdown (%)"               = -as.numeric(maxDrawdown(r, geometric = TRUE)) * 100,
+    "Downside Deviation (%, ann.)"   = as.numeric(DownsideDeviation(r, MAR = 0)) * sqrt(ann) * 100,
+    "Worst Day (%)"                  = min(as.numeric(r)) * 100,
+    "Positive Days (%)"              = mean(as.numeric(r) > 0) * 100)
+}
+
+Stats_tbl <-
+  sapply(colnames(Ret_xts), function(n) stat_col(Ret_xts[, n])) %>%
+  as_tibble(rownames = "Metric")
+
+# Fund relative to the Capped SWIX (shown for SafeCore only):
+f <- as.numeric(Ret_xts[, "SafeCore"])
+b <- as.numeric(Ret_xts[, "Capped_SWIX"])
+
+Relative_tbl <-
+  tibble(Metric = c("Beta to Capped SWIX",
+                    "Tracking Error (%, ann.)",
+                    "Information Ratio",
+                    "Up Capture (%)",
+                    "Down Capture (%)"),
+         SafeCore = c(as.numeric(CAPM.beta(Ra = Ret_xts[, "SafeCore"], Rb = Ret_xts[, "Capped_SWIX"])),
+                      as.numeric(TrackingError(Ret_xts[, "SafeCore"], Ret_xts[, "Capped_SWIX"], scale = ann)) * 100,
+                      as.numeric(InformationRatio(Ret_xts[, "SafeCore"], Ret_xts[, "Capped_SWIX"], scale = ann)),
+                      mean(f[b > 0]) / mean(b[b > 0]) * 100,      # average fund return / benchmark return on up days
+                      mean(f[b < 0]) / mean(b[b < 0]) * 100))     # same on down days (<100 = loses less)
+
+Final_tbl <- bind_rows(Stats_tbl, Relative_tbl)
+
+options(knitr.kable.NA = "")
+kable(Final_tbl,
+      digits = 2,
+      align = "lrr",
+      caption = paste0("SafeCore vs Capped SWIX: ", min(index(Ret_xts)), " to ", max(index(Ret_xts)),
+                       " (daily data, annualised with ", ann, " days)"))
+
+```
+
+### Where does volatility come from
+
+## Part C
+
+### Chart 1 (Dispersion):
+```{r}
+# Data
+csv_df   <- calc_cross_sectional_metrics(Local_Index_Constituents, window = 120)
+cor_df   <- calc_rolling_correlations(Local_Index_Constituents, window = 60)
+idio_df  <- calc_idiosyncratic_metrics(Local_Index_Constituents, Idx_Daily, benchmark_ticker = "J433")
+macro_df <- prepare_macro_factors(Uncertainty_Indexes, Gl_Cncy_Vol_Index)
+
+# Master dataset from 2020 onwards
+alpha_master_df <- list(csv_df, cor_df, idio_df, macro_df) %>%
+  purrr::map(~ mutate(.x, date = as.Date(date))) %>%
+  purrr::reduce(dplyr::left_join, by = "date")
+```
+
+Weighted CSV since 2020 (annotated with major events: COVID crash, 2022 global rate hikes, local election/rate cycles), with a brief comparison to unweighted CSV.
+```{r}
+csv_dispersion_plot <- plot_csv_dispersion(alpha_master_df)
+csv_dispersion_plot
+ggsave("figures/csv_dispersion_plot.png", csv_dispersion_plot)
+```
+
+
+Chart 2 (Correlation Regime): Rolling 60-day median pairwise correlation + interquartile ribbon (or Rolling PCA 1st component variance explained / Sector DCC-GARCH).
+```{r}
+
+correlation_regimes_plot <- plot_correlation_regimes(alpha_master_df)
+correlation_regimes_plot
+ggsave("figures/correlation_regimes_plot.png", correlation_regimes_plot)
+```
+
+Chart 3 (The "Alpha Opportunity Matrix"): Plot CSV against Rolling Correlation. Highlight quadrants (e.g., High CSV + Low Correlation = Peak Stock-Picker's Market).
+```{r}
+alpha_quadrant_plot <- plot_alpha_quadrant(alpha_master_df)
+alpha_quadrant_plot
+ggsave("figures/alpha_quadrant_plot.png", alpha_quadrant_plot)
+```
+
+Chart 4 / Table (Macro Drivers): Overlay CSV and Rolling Correlation with 2–3 key macro series (e.g., VIX, US 10Y Yield, USD/ZAR) and compute rolling correlations or regime averages (e.g., 2020–2021 ZIRP era vs. 2022–2023 Hiking era vs. 2024–2026 Normalization).
+
+```{r}
+
+macro_drivers_plot<- plot_macro_drivers(alpha_master_df)
+macro_drivers_plot
+ggsave("figures/macro_drivers_plot.png", macro_drivers_plot)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Question 4
+```{r}
+#write_csv(div_w_PC_return_mat,"data/div_w_PC_return_mat.csv")
+
+return_mat <- bind_rows(SPX,
+            LSTA_3,
+            CELFX,
+            US_REIT,
+            US_COM,
+            US_infra,
+            US_GOV_3,
+            VVHH) |>
+  group_by(Ticker) |> 
+  arrange(date, .by_group = TRUE) |> 
+  filter(date >=  "2021-06-30") |> 
+  filter(date <=  "2026-08-01") |> 
+  mutate( YM = format(date, "%Y%b")) |> 
+  ungroup() |> 
+  group_by(YM) |> 
+  filter(date %in% last(date)) |>
+  ungroup() |> 
+  group_by(Ticker) |> 
+  mutate(log_rets = log(TRI / lag(TRI))) |>
+  ungroup() |> 
+  select(-TRI) |>  
+  select(-YM) |> 
+  group_by(Ticker) |> 
+  spread(Ticker, log_rets) |> 
+  slice(-1) |>
+    arrange(date) 
+
+str(return_mat)
+  
+return_mat <- impute_missing_returns(return_mat, impute_returns_method = "Drawn_Distribution_Own")
+return_mat_NO_DATE <- return_mat |> select(-date) |> as.matrix()
+
+order <- colnames(return_mat_NO_DATE)
+order
+
+gamma_List <- seq(0,150,by = 0.1) %>% as.list()
+
+Amat <- cbind(rep(1,11),diag(1,11,11),diag(-1,11,11))
+
+bvec <- c(1, rep(0.02, 11), -0.15, rep(-0.5, 10))
+bvec
+
+```
+
