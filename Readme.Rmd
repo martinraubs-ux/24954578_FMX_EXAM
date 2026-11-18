@@ -52,6 +52,7 @@ Bond_Yields <- read_rds("data/Global_Bond_Yields.rds")
 LCL_Yield_Proxies <- read_rds("data/Monthly_LCL_Yield_Indexes.rds")
 
 ## Part C
+Size_Idx <- read_rds("data/Monthly_Index_Constituents.rds")
 ```
 
 ### How has global volatility increased
@@ -480,96 +481,89 @@ ggsave("figures/macro_drivers_plot.png", macro_drivers_plot)
 ```{r}
 
 glimpse(Size_Idx); glimpse(Stock_returns_daily)
-Size_Idx %>% distinct(Fund) %>% print()   # <- see the codes for large/mid/small/Capped SWIX
+Size_Idx %>% distinct(Fund) %>% print()  
 
 bench      <- "CappedSWIX"   
-idx_levels <- c("LargeCaps", "MidCaps", "SmallCaps")  # <- EDIT: large, mid, small cap codes as they appear
-
-prep_constituents <- function(df) {
-  df %>%
-    transmute(date, Tickers, Index = Fund, Sector, Weight) %>%
-    filter(!is.na(Weight), Weight > 0) %>%
-    group_by(Index, date) %>%
-    mutate(Weight = Weight / sum(Weight)) %>%   # weights sum to 1 in each index-month
-    ungroup()
-}
-
-cons <- prep_constituents(Size_Idx)
-
-build_stock_panel <- function(cons, daily) {
-  cons %>%
-    mutate(ym = floor_date(date, "month") %m+% months(1)) %>%
-    select(-date) %>%
-    inner_join(daily %>% mutate(ym = floor_date(date, "month")),
-               by = c("Tickers", "ym"), relationship = "many-to-many")
-}
-
-build_index_returns <- function(panel, by = c("Index")) {
-  panel %>%
-    group_by(across(all_of(c(by, "date")))) %>%
-    summarise(Return = sum(Weight * Returns, na.rm = TRUE) /
-                       sum(Weight[!is.na(Returns)]), .groups = "drop")
-}
+idx_levels <- c("LargeCaps", "MidCaps", "SmallCaps")  
+cons <- prep_constituents(Size_Idx) %>% 
+  mutate(Sector = replace_na(Sector, "Unclassified"),
+         Sector = ifelse(Index == "LargeCaps" & Sector == "Unclassified", na.omit(), Sector))
 
 panel   <- build_stock_panel(cons, Stock_returns_daily)
 idx_ret <- build_index_returns(panel) %>% filter(Index %in% c(idx_levels, "CappedSWIX"))
 ```
 
 ```{r}
-sector_weights <- function(cons) {
-  cons %>% group_by(Index, date, Sector) %>%
-    summarise(SectorW = sum(Weight), .groups = "drop")
-}
-
-plot_sector_weights <- function(sw, idx) {
-  sw %>% filter(Index %in% idx) %>%
-    ggplot(aes(date, SectorW, fill = Sector)) +
-    geom_area() + facet_wrap(~Index) +
-    scale_y_continuous(labels = percent) +
-    labs(title = "Sector exposure over time", x = NULL, y = "Weight") +
-    theme_minimal()
-}
-
 # Sector-stratified returns inside each index (sector sub-portfolios)
 sector_ret <- build_index_returns(panel %>% filter(Index %in% idx_levels),
                                   by = c("Index", "Sector"))
 
+
+sector_cols <- c(Financials = "#1b9e77", Industrials = "#d95f02", Property = "#7570b3",
+                 Resources = "#e6ab02", Unclassified = "grey70")
+
+idx_order <- c("CappedSWIX", "LargeCaps", "MidCaps", "SmallCaps")
+
 ## Calculating and Plotting sector weights
 sw <- sector_weights(cons= cons)
-CappedSWIX_sw_plot <- plot_sector_weights(sw = sw, idx = "CappedSWIX")
-CappedSWIX_sw_plot 
-LargeCaps_sw_plot <- plot_sector_weights(sw = sw, idx = "LargeCaps")
-LargeCaps_sw_plot 
-MidCaps_sw_plot <- plot_sector_weights(sw = sw, idx = "MidCaps")
-MidCaps_sw_plot 
-SmallCaps_sw_plot <- plot_sector_weights(sw = sw, idx = "SmallCaps")
-SmallCaps_sw_plot 
 
-sector_exposure_plot <- (CappedSWIX_sw_plot + LargeCaps_sw_plot)/(MidCaps_sw_plot + SmallCaps_sw_plot)
+plots <- idx_order %>%
+  imap(\(i, k) plot_sector_weights(sw, i, show_y = k %in% c(1, 3)))
+
+sector_exposure_plot <-
+  wrap_plots(plots, ncol = 2, guides = "collect") +
+  plot_annotation(
+    title    = "Sector exposure of South African size indexes",
+    subtitle = "Share of index weight by sector, month-end constituents, 2007 to 2026",
+    caption  = "Source: Monthly Index Constituents. Sector labelled Unclassified where no sector mapping exists.",
+    theme = theme(plot.title    = element_text(size = 16, face = "bold"),
+                  plot.subtitle = element_text(size = 11, colour = "grey30"))
+  ) &
+  theme(legend.position = "bottom", legend.title = element_blank())
+
 sector_exposure_plot
+ggsave("figures/sector_exposure_plot.png",sector_exposure_plot)
 
 ## Plotting sector returns
 sector_ret <- build_index_returns(panel %>% filter(Index %in% c(idx_levels, "CappedSWIX")),
                                   by = c("Index", "Sector"))
-# ?
 
+sector_ret_clean <- sector_ret %>%
+  filter(Index %in% idx_order) %>%
+  drop_short_series(min_days = 500)
+
+
+sector_growth_plot <- plot_sector_growth(sector_ret_clean %>% filter(Index %in% idx_order))
+sector_growth_plot
+ggsave("figures/sector_growth_plot.png",sector_growth_plot)
+
+sector_summary <- sector_ret %>%
+  filter(Index %in% idx_order) %>%
+  group_by(Index, Sector) %>%
+  filter(n() > 500) %>%
+  summarise(AnnRet = prod(1 + Return)^(252 / n()) - 1,
+            AnnVol = sd(Return) * sqrt(252),
+            RetPerRisk = AnnRet / AnnVol, .groups = "drop") %>%
+  mutate(Index = factor(Index, levels = idx_order))
+
+sector_summary %>% arrange(Index, desc(RetPerRisk)) %>% knitr::kable(digits = 3)
+
+sector_riskret_plot <- sector_summary %>%
+  ggplot(aes(AnnVol, AnnRet, colour = Sector, shape = Index)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = sector_cols) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Sector risk and return across size indexes",
+       x = "Annualised volatility", y = "Annualised return") +
+  theme_minimal(base_size = 11)
 ```
 
 Stock concentration
 ```{r}
-concentration <- function(cons) {
-  cons %>% group_by(Index, date) %>%
-    summarise(N     = n(),
-              HHI   = sum(Weight^2),
-              EffN  = 1 / HHI,                        # effective number of stocks
-              Top5  = sum(sort(Weight, decreasing = TRUE)[1:5]),
-              Top10 = sum(sort(Weight, decreasing = TRUE)[1:10]),
-              .groups = "drop")
-}
-
 conc <- concentration(cons) %>% filter(Index %in% c(idx_levels, bench))
 
-conc %>% ggplot(aes(date, EffN, colour = Index)) + geom_line() +
+conc_plot <- conc %>% ggplot(aes(date, EffN, colour = Index)) + geom_line() +
   labs(title = "Effective number of stocks (1/HHI)", x = NULL, y = NULL) + theme_minimal()
 
 conc %>% group_by(Index) %>%
@@ -577,21 +571,6 @@ conc %>% group_by(Index) %>%
 ```
 
 ```{r}
-fit_models <- function(x) {
-  models <- 1:4; model.list <- list()
-  for (p in models) {
-    spec <- ugarchspec(
-      variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","apARCH")[p], garchOrder = c(1, 1)),
-      mean.model     = list(armaOrder = c(1, 0), include.mean = TRUE),
-      distribution.model = c("norm","snorm","std","sstd","ged","sged","nig","ghyp","jsu")[1])
-    model.list[[p]] <- ugarchfit(spec = spec, data = as.numeric(x))
-  }
-  names(model.list) <- c("sGARCH","gjrGARCH","eGARCH","apARCH")
-  fit.mat <- sapply(model.list, infocriteria)
-  rownames(fit.mat) <- rownames(infocriteria(model.list[[1]]))
-  fit.mat
-}
-
 # One information-criteria table per index
 ic_tables <- idx_ret %>% group_split(Index) %>% set_names(map_chr(., ~ .x$Index[1])) %>%
   map(~ fit_models(.x$Return))
@@ -618,48 +597,35 @@ sector_vol <- sector_ret %>% arrange(date) %>%
   group_modify(~ e_sigma(.x))
 
 # Lets Facet wrap on Index showing conditional volatility
-idx_vol %>% ggplot(aes(date, Sigma, colour = Index)) + geom_line() +
+eGARCH_vol_plot <- idx_vol %>% ggplot(aes(date, Sigma, colour = Index)) + geom_line() +
   scale_y_continuous(labels = percent) +
-  labs(title = "GJR-GARCH annualised volatility", x = NULL, y = NULL) + theme_minimal()
+  labs(title = "e-GARCH annualised volatility", x = NULL, y = NULL) + theme_minimal()
+eGARCH_vol_plot
 
-
-sector_vol %>% group_by(Index, Sector) %>% summarise(AvgVol = mean(Sigma, na.rm = TRUE), .groups = "drop") %>% drop_na() %>%
+sector_vol_plot <- sector_vol %>% group_by(Index, Sector) %>% summarise(AvgVol = mean(Sigma, na.rm = TRUE), .groups = "drop") %>% drop_na() %>%
   ggplot(aes(Index, Sector, fill = AvgVol)) + geom_tile() +
   scale_fill_viridis_c(labels = percent) + labs(title = "Average sector volatility by size index") +
   theme_minimal()
+sector_vol_plot
 ```
 
 Finally, constituent-level volatility over time, without GARCH (too heavy for hundreds of stocks), using a rolling 60-day standard deviation:
 ```{r}
-constituent_vol <- function(panel, window = 60) {
-  panel %>% arrange(Tickers, date) %>%
-    group_by(Index, Tickers) %>%
-    mutate(Vol = slide_dbl(Returns, sd, .before = window - 1, .complete = TRUE) * sqrt(252)) %>%
-    group_by(Index, date) %>%
-    summarise(MedianVol = median(Vol, na.rm = TRUE),
-              WtdVol    = weighted.mean(Vol, Weight, na.rm = TRUE), .groups = "drop")
-}
-
 cvol <- constituent_vol(panel %>% filter(Index %in% c(idx_levels, "CappedSWIX" )))
-cvol %>% ggplot(aes(date, MedianVol, colour = Index)) + geom_line() +
+cvol_plot <- cvol %>% ggplot(aes(date, MedianVol, colour = Index)) + geom_line() +
   labs(title = "Median constituent volatility (60d, annualised)") + theme_minimal()
 ```
 
 Rolling returns and regime stratification
 ```{r}
-rolling_ret <- function(df, years = 1) {
-  n <- 252 * years
-  df %>% arrange(date) %>% group_by(Index) %>%
-    mutate(RollRet = slide_dbl(Return, ~ prod(1 + .x)^(252 / length(.x)) - 1,
-                               .before = n - 1, .complete = TRUE)) %>%
-    ungroup() %>% mutate(Window = paste0(years, "Y"))
-}
-
 rr <- bind_rows(rolling_ret(idx_ret, 1), rolling_ret(idx_ret, 3))
 
-rr %>% drop_na() %>% ggplot(aes(date, RollRet, colour = Index)) + geom_line() +
-  facet_wrap(~Window, ncol = 1) + scale_y_continuous(labels = percent) +
+rr_plot <- rr %>% #filter(Window %in% "3Y") %>%
+  drop_na() %>% ggplot(aes(date, RollRet, colour = Index)) + geom_line() +
+  facet_wrap(~Window, ncol = 1) +
+    scale_y_continuous(labels = percent) +
   labs(title = "Rolling annualised returns", x = NULL, y = NULL) + theme_minimal()
+rr_plot
 
 # Risk/return summary
 summary_tbl <- idx_ret %>% group_by(Index) %>%
@@ -675,13 +641,88 @@ regimes <- idx_vol %>% filter(Index == bench) %>%
   ungroup() %>% 
   select(-Index)
 
-  idx_ret %>% inner_join(regimes, by = "date") %>% group_by(Index, Regime) %>%
-  summarise(AnnRet = mean(Return) * 252, AnnVol = sd(Return) * sqrt(252), .groups = "drop") %>%
-  kable(digits = 3)
+  regime_tbl <- idx_ret %>% inner_join(regimes, by = "date") %>% group_by(Index, Regime) %>%
+  summarise(AnnRet = mean(Return) * 252, AnnVol = sd(Return) * sqrt(252), .groups = "drop")
+```
+
+Calculating alpha share
+```{r}
+AS <- active_share(cons, bench, idx_levels)
+
+as_plot <- AS %>% ggplot(aes(date, ActiveShare, colour = Index)) + geom_line() +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(title = "Active share vs Capped SWIX") + theme_minimal()
+as_plot
 ```
 
 
+```{r, include=FALSE}
 
+figs <- list(
+  sector_exposure  = list(plot = sector_exposure_plot, width = 9,  height = 7),
+  sector_growth    = list(plot = sector_growth_plot,   width = 9,  height = 7),
+  #sector_rolling   = list(plot = plot_sector_rolling(sector_ret_clean), width = 9, height = 7),
+  sector_riskret   = list(plot = sector_riskret_plot,  width = 7,  height = 5),  # name your scatter object
+  concentration    = list(plot = conc_plot,            width = 8,  height = 4.5),
+  eGARCH_vol          = list(plot = eGARCH_vol_plot,         width = 8,  height = 4.5),
+  sector_vol_heat  = list(plot = sector_vol_plot,      width = 7,  height = 5),
+  constituent_vol  = list(plot = cvol_plot,            width = 8,  height = 4.5),
+  rolling_returns  = list(plot = rr_plot,              width = 8,  height = 7),
+  active_share     = list(plot = as_plot,              width = 8,  height = 4.5)
+)
+
+iwalk(figs, \(f, nm) save_fig(f$plot, nm, f$width, f$height))
+list.files("figures")   # check: should list all your pngs
+```
+
+```{r,include=FALSE}
+dir.create("data/tables", recursive = TRUE, showWarnings = FALSE)
+
+# Turn each table into a plain tibble first
+ic_all <- imap_dfr(ic_tables, \(m, idx)
+  as_tibble(m, rownames = "Criterion") %>% mutate(Index = idx, .before = 1))
+
+tables <- list(
+  concentration_summary = conc %>% group_by(Index) %>%
+    summarise(across(c(N, EffN, Top5, Top10), mean), .groups = "drop"),
+  ic_tables             = ic_all,
+  risk_return_summary   = summary_tbl,
+  regime_table          = regime_tbl,        # assign the regime kable's data to regime_tbl
+  sector_summary        = sector_summary,
+  active_share_summary  = AS %>% group_by(Index) %>%
+    summarise(Mean = mean(ActiveShare), Min = min(ActiveShare), Max = max(ActiveShare), .groups = "drop")
+)
+
+iwalk(tables, \(x, nm) write_rds(x, file.path("data/tables", paste0(nm, ".rds"))))
+
+# Large intermediate objects the Rmd may need to redraw plots
+list(idx_ret = idx_ret, idx_vol = idx_vol, sector_vol = sector_vol,
+     sector_ret = sector_ret_clean, sw = sw, conc = conc, AS = AS, cvol = cvol, rr = rr) %>%
+  iwalk(\(x, nm) write_rds(x, file.path("data", paste0(nm, ".rds"))))
+dir.create("data/tables", recursive = TRUE, showWarnings = FALSE)
+
+# Turn each table into a plain tibble first
+ic_all <- imap_dfr(ic_tables, \(m, idx)
+  as_tibble(m, rownames = "Criterion") %>% mutate(Index = idx, .before = 1))
+
+tables <- list(
+  concentration_summary = conc %>% group_by(Index) %>%
+    summarise(across(c(N, EffN, Top5, Top10), mean), .groups = "drop"),
+  ic_tables             = ic_all,
+  risk_return_summary   = summary_tbl,
+  regime_table          = regime_tbl,        # assign the regime kable's data to regime_tbl
+  sector_summary        = sector_summary,
+  active_share_summary  = AS %>% group_by(Index) %>%
+    summarise(Mean = mean(ActiveShare), Min = min(ActiveShare), Max = max(ActiveShare), .groups = "drop")
+)
+
+iwalk(tables, \(x, nm) write_rds(x, file.path("data/tables", paste0(nm, ".rds"))))
+
+# Large intermediate objects the Rmd may need to redraw plots
+list(idx_ret = idx_ret, idx_vol = idx_vol, sector_vol = sector_vol,
+     sector_ret = sector_ret_clean, sw = sw, conc = conc, AS = AS, cvol = cvol, rr = rr) %>%
+  iwalk(\(x, nm) write_rds(x, file.path("data", paste0(nm, ".rds"))))
+```
 
 
 
