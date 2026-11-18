@@ -14,7 +14,7 @@ list.files('./code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% a
 ```
 ```{r Libraries, include=FALSE}
 pacman::p_load(PerformanceAnalytics, tidyverse, rmsfuns, tbl2xts, rugarch, kableExtra, fredr,
-               scales,MTS, rmgarch, ggthemes, patchwork)
+               scales,MTS, rmgarch, ggthemes, patchwork, RiskPortfolios, quadprog)
 ```
 
 ```{r loading data, include=FALSE }
@@ -56,6 +56,8 @@ Size_Idx <- read_rds("data/Monthly_Index_Constituents.rds")
 Active_Manager_Peers <- read_rds("data/Active_Managers.rds")
 # ABC Fund Returns:
 ABC_Fund <- read_rds("data/ABC_Fund.rds")
+
+Currency_Hedge_Plays <- readRDS("data/Currency_Hedge_Plays.rds")
 ```
 
 # Question 1
@@ -1268,11 +1270,28 @@ list(`1_beta` = beta_plot, `2_r2` = r2_plot, `3_drivers` = driver_plot, `4_fan` 
 
 
 
+
+
+ 6. Solve across gamma_List safely (using Dmat = 2 * Sigma, dvec = gamma * mu avoids gamma = 0 singularity)
+frontier_weights <- purrr::map_dfr(gamma_List, function(g) {
+  sol <- quadprog::solve.QP(
+    Dmat = 2 * Sigma,
+    dvec = g * mu,
+    Amat = Amat,
+    bvec = bvec,
+    meq  = 1
+  )
+  tibble(
+    gamma   = g,
+    Tickers = tickers,
+    Weight  = pmax(0, round(sol$solution, 6))
+  )
+})
+
 # Question 4
 
-```{r Constructing bond TRIs}
-Bond_Yields <- construct_bond_tri(Bond_Yields) %>%  select(-c(Bond_Ret, mod_dur))
-```
+
+
 
 ```{r}
 Q4_data <- bind_rows(
@@ -1299,79 +1318,30 @@ Q4_data <- bind_rows(
 
 # Spread into wide monthly return xts matrix for covariance estimation & optimization
 return_mat <- Q4_data %>% filter(date >= "2015-01-31") %>% 
-  tbl_xts(cols_to_xts = Returns, spread_by = Tickers)
+  spread(Tickers, Returns)
 
 colSums(!is.na(return_mat))
 return_mat <- return_mat %>% impute_missing_returns(impute_returns_method = "Drawn_Distribution_Own") # Own distribution because the different assets vary
-```
-
-```{r}
-Q4_data <- 
-              # MSCI
-              MSCI %>% select(date, Tickers = Ticker, TRI) %>% 
-  
-              # Vanilla
-              bind_rows(Idx_Daily %>%  filter(Tickers %in% c("STXMOMJ433", 
-                                                             "STXVALJ433"
-                                                             ,"J200"
-                                                             ,"J201")) %>% 
-                                           arrange(date) %>% group_by(Tickers) %>% 
-                                           mutate(TRI= 100 *cumprod(1+Returns)) %>% 
-                                           select(date, Tickers, TRI ) ) %>% 
-  
-              # 10Y bonds
-              bind_rows(Bond_Yields%>%  select(date, Tickers = Ticker, TRI)) %>%
-  
-              # LCL
-              bind_rows(LCL_Yield_Proxies %>% arrange(date) %>% group_by(Tickers) %>% 
-                                           mutate(TRI= 100 *cumprod(1+Returns)) %>% 
-                                           select(date, Tickers, TRI )) %>%  
-  
-              # Commodoties
-              bind_rows(Commods %>%  select(date, Tickers = Ticker, TRI)) %>% 
-            
-              arrange(date) %>% group_by(Tickers) %>% 
-              mutate(Returns = (TRI-lag(TRI))/lag(TRI)) %>% select(-TRI) %>% ungroup()
-   
-return_mat <- Q4_data %>% tbl_xts(cols_to_xts = Returns, spread_by = Tickers )
-return_mat <- bind_rows(SPX,
-            LSTA_3, 
-            CELFX,
-            US_REIT,
-            US_COM,
-            US_infra,
-            US_GOV_3,
-            VVHH) |>
-  group_by(Ticker) |> 
-  arrange(date, .by_group = TRUE) |> 
-  filter(date >=  "2021-06-30") |> 
-  filter(date <=  "2026-08-01") |> 
-  mutate( YM = format(date, "%Y%b")) |> 
-  ungroup() |> 
-  group_by(YM) |> 
-  filter(date %in% last(date)) |>
-  ungroup() |> 
-  group_by(Ticker) |> 
-  mutate(log_rets = log(TRI / lag(TRI))) |>
-  ungroup() |> 
-  select(-TRI) |>  
-  select(-YM) |> 
-  group_by(Ticker) |> 
-  spread(Ticker, log_rets) |> 
-  slice(-1) |>
-    arrange(date) 
-
-str(return_mat)
-  
-return_mat <- impute_missing_returns(return_mat, impute_returns_method = "Drawn_Distribution_Own")
+colSums(is.na(return_mat))
 return_mat_NO_DATE <- return_mat |> select(-date) |> as.matrix()
 
-order <- colnames(return_mat_NO_DATE)
-order
+tickers <- colnames(return_mat_NO_DATE)
+tickers
 
-gamma_List <- seq(0,150,by = 0.1) %>% as.list()
+gamma_List <- seq(2, 150, by = 0.5) %>% as.list()
+```
 
+```{r Constraints}
 ################
+bond_tickers <- c(as.vector(unique(Bond_Yields$Ticker)), as.vector((unique(LCL_Yield_Proxies$Tickers))))
+equity_tickers <- c(as.vector(unique(MSCI$Ticker)), "STXMOMJ433", "STXVALJ433", "J200", "J201")
+comm_tickers <-  c(as.vector(unique(Commods$Ticker)))
+global_tickers <- c(
+  unique(as.character(MSCI$Ticker)),
+  unique(as.character(Bond_Yields$Ticker)),
+  unique(as.character(Commods$Ticker))
+)
+
 # Constraints
 N <- length(tickers)
 
@@ -1400,11 +1370,280 @@ A_grp <- cbind(
   -is_comm,    # Commodities <= 15%
   -is_global   # Global Exposure <= 60%
 )
-b_grp <- c(-0.25, -0.75, -0.15, -0.60)
+b_grp <- c(-0.25,          # Bonds <= 0.25
+  -0.75,          # Equities <= 0.75
+  -0.15,          # Commodities <= 0.15
+  -0.60           # Global <= 0.60
+)
 
 # Combine all constraints (assets = rows, constraints = columns)
 Amat <- cbind(A_eq, A_lb, A_ub, A_grp)
 bvec <- c(b_eq, b_lb, b_ub, b_grp)
 
+
+```
+
+```{r}
+# 1. Start at 2010-01-31 so a 10-year (120-month) lookback covers 2020–2026 out-of-sample
+return_mat_raw <- Q4_data %>%
+  filter(date >= as.Date("2010-01-31")) %>%
+  pivot_wider(names_from = Tickers, values_from = Returns) %>%
+  arrange(date)
+
+# Record actual observed months BEFORE imputing sporadic gaps (5-year = 60-month rule)
+raw_obs_counts <- colSums(!is.na(return_mat_raw %>% select(-date)))
+
+return_mat <- return_mat_raw %>%
+  impute_missing_returns(impute_returns_method = "Drawn_Distribution_Own")
+
+return_mat_NO_DATE <- return_mat %>% select(-date) %>% as.matrix()
+tickers            <- colnames(return_mat_NO_DATE)
+N                  <- length(tickers)
+
+# 2. Update single-asset upper bound vector so < 60-month assets are forced to 0
+b_ub <- if_else(raw_obs_counts[tickers] >= 60, -0.35, 0.00)
+
+# Re-assemble bvec using your exact Amat from your Constraints chunk
+bvec <- c(b_eq, b_lb, b_ub, b_grp)
+
+# 3. Your exact shrinkage covariance & sample mean vector (no Bayes-Stein)
+Sigma <- RiskPortfolios::covEstimation(return_mat_NO_DATE, control = list(type = "lw"))
+mu    <- colMeans(return_mat_NO_DATE, na.rm = TRUE)
+
+
+```
+
+```{r}
+# ==============================================================================
+# 1A. TRACE THE CONSTRAINED EFFICIENT FRONTIER OVER YOUR gamma_List
+# ==============================================================================
+
+
+frontier_df <- purrr::map_dfr(
+  gamma_List,
+  ~ solve_frontier_gamma(.x, mu = mu, Sigma = Sigma, Amat = Amat, bvec = bvec, tickers = tickers)
+)
+
+
+#  EXTRACT KEY PORTFOLIOS + CONSTRAINED EQUAL RISK CONTRIBUTION (ERC)
+
+# 1. Global Minimum Variance (highest risk aversion on frontier)
+w_minvol <- frontier_df %>% slice_max(gamma, n = 1, with_ties = FALSE) %>% pull(weights) %>% .[[1]] %>% rename(MinVol = Weight)
+
+# 2. Maximum Sharpe Ratio (Tangency portfolio along the constrained frontier)
+w_maxsr  <- frontier_df %>% slice_max(Sharpe_Ratio, n = 1, with_ties = FALSE) %>% pull(weights) %>% .[[1]] %>% rename(Max_Sharpe = Weight)
+
+# 3. Moderate Risk Aversion (gamma = 5)
+w_mv_mod <- frontier_df %>% filter(near(gamma, 5)) %>% pull(weights) %>% .[[1]] %>% rename(MV_Gamma5 = Weight)
+
+# 4. Constrained Equal Risk Contribution (ERC projected onto your exact Amat / bvec)
+elig_idx <- which(b_ub < 0)
+w_erc_uncon <- rep(0, N)
+erc_try <- purrr::safely(RiskPortfolios::optimalPortfolio)(
+  Sigma = Sigma[elig_idx, elig_idx, drop = FALSE],
+  control = list(type = "erc", constraint = "lo")
+)
+w_erc_uncon[elig_idx] <- if (is.null(erc_try$error)) {
+  as.numeric(erc_try$result)
+} else {
+  (1 / sqrt(diag(Sigma)[elig_idx])) / sum(1 / sqrt(diag(Sigma)[elig_idx]))
+}
+w_erc_sol <- quadprog::solve.QP(Dmat = diag(N), dvec = w_erc_uncon, Amat = Amat, bvec = bvec, meq = 1)$solution %>% pmax(0)
+w_erc     <- tibble(Tickers = tickers, ERC = round(w_erc_sol / sum(w_erc_sol), 6))
+
+# Combine static optimal weights & verify all group constraints
+static_weights_df <- list(w_minvol, w_maxsr, w_mv_mod, w_erc) %>%
+  purrr::reduce(left_join, by = "Tickers") %>%
+  mutate(
+    Asset_Class = case_when(
+      Tickers %in% bond_tickers   ~ "Bonds",
+      Tickers %in% equity_tickers ~ "Equities",
+      Tickers %in% comm_tickers   ~ "Commodities",
+      TRUE                        ~ "Other"
+    ),
+    Region = if_else(Tickers %in% global_tickers, "Global", "Local")
+  )
+
+# Audit group exposures across all four static portfolios
+static_weights_df %>%
+  group_by(Asset_Class) %>%
+  summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum))
+
+static_weights_df %>%
+  group_by(Region) %>%
+  summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum))
+```
+
+This wraps your exact Sigma, means vector Amat and bvec solver into a quarterly-rebalanced out-of-sample simulation (by = 3 months, minimum 120-month lookback), tracking intra-quarter weight drift, quarterly turnover, and net-of-cost performance (15 bps transaction cost).
+```{r}
+bt_results <- run_quarterly_backtest(return_mat_raw, Amat, b_eq, b_lb, b_grp, lookback_min = 120)
+```
+
+Some analytics
+Tables
+How did the Portfolio perfrom outside the sample period?
+```{r}
+#  OUT-OF-SAMPLE PERFORMANCE, TURNOVER & EFFECTIVE DIVERSIFICATION (N_EFF)
+#  per optimisation strategy 
+oos_summary_table <- bt_results$returns %>%
+  group_by(Strategy) %>%
+  summarise(
+    Ann_Return_Gross = prod(1 + Gross_Ret)^(12 / n()) - 1,
+    Ann_Return_Net   = prod(1 + Net_Ret)^(12 / n()) - 1,
+    Ann_Volatility   = sd(Net_Ret) * sqrt(12),
+    Sharpe_Net       = (Ann_Return_Net - 0.06) / Ann_Volatility,
+    Max_Drawdown     = {
+      w <- cumprod(1 + Net_Ret)
+      min(w / cummax(w) - 1)
+    },
+    Avg_Quarterly_TO = mean(Turnover[Turnover > 0], na.rm = TRUE),
+    Avg_N_Eff        = mean(N_Eff, na.rm = TRUE),
+    .groups          = "drop"
+  )
+
+oos_summary_table
+```
+
+
+```{r}
+# 3B. CAPITAL WEIGHTS VS. TRUE RISK CONTRIBUTION BY ASSET CLASS
+
+risk_budget_table <- bt_results$weights %>%
+  mutate(
+    Asset_Class = case_when(
+      Tickers %in% bond_tickers   ~ "Bonds",
+      Tickers %in% equity_tickers ~ "Equities",
+      Tickers %in% comm_tickers   ~ "Commodities",
+      TRUE                        ~ "Other"
+    )
+  ) %>%
+  group_by(reb_date, Asset_Class) %>%
+  summarise(
+    W_MinVol = sum(MinVol),   RC_MinVol = sum(RC_MinVol),
+    W_MV5    = sum(MV_Gamma5),RC_MV5    = sum(RC_MV5),
+    W_MaxSR  = sum(Max_Sharpe),RC_MaxSR = sum(RC_MaxSR),
+    W_ERC    = sum(ERC),      RC_ERC    = sum(RC_ERC),
+    .groups  = "drop"
+  ) %>%
+  group_by(Asset_Class) %>%
+  summarise(across(starts_with(c("W_", "RC_")), mean), .groups = "drop")
+
+risk_budget_table
+```
+
+```{r}
+#  REGIME STRESS ATTRIBUTION (2020 COVID VS. 2022 RATE SHOCK VS. POST-2023)
+
+regime_table <- bt_results$returns %>%
+  mutate(
+    Regime = case_when(
+      date <= as.Date("2020-06-30") ~ "1. 2020 COVID Shock",
+      date >= as.Date("2022-01-01") & date <= as.Date("2022-12-31") ~ "2. 2022 Inflation & Rate Shock",
+      TRUE ~ "3. Recovery & Normalization"
+    )
+  ) %>%
+  group_by(Regime, Strategy) %>%
+  summarise(
+    Cum_Net_Return = prod(1 + Net_Ret) - 1,
+    Ann_Vol        = sd(Net_Ret) * sqrt(12),
+    Worst_Month    = min(Net_Ret),
+    .groups        = "drop"
+  ) %>%
+  pivot_wider(names_from = Strategy, values_from = Cum_Net_Return, id_cols = Regime)
+
+regime_table
+```
+
+Figures
+
+```{r}
+# 1. Constrained Mean-Variance Efficient Frontier (from your gamma_List)
+key_pts <- frontier_df %>%
+  filter(near(gamma, 150) | near(gamma, 5) | Sharpe_Ratio == max(Sharpe_Ratio)) %>%
+  mutate(Label = case_when(
+    near(gamma, 150) ~ "MinVol (High Gamma)",
+    near(gamma, 5)   ~ "Moderate MV (Gamma = 5)",
+    TRUE             ~ "Max Sharpe (Tangency)"
+  ))
+```
+
+```{r}
+tibble(
+  Tickers        = tickers,
+  Ann_Arith_Ret  = mu * 12,
+  Ann_Vol        = sqrt(diag(Sigma)) * sqrt(12),
+  Approx_CAGR    = (mu * 12) - 0.5 * (diag(Sigma) * 12)
+) %>%
+  arrange(desc(Ann_Arith_Ret)) %>%
+  print(n = 15)
+
+p_frontier <- ggplot(frontier_df, aes(x = Ann_Vol, y = Ann_Return, color = Sharpe_Ratio)) +
+  geom_path(linewidth = 1.2) +
+  geom_point(data = key_pts, size = 3.5, color = "#1B4F72") +
+  ggrepel::geom_label_repel(
+    data = key_pts, aes(label = Label),
+    size = 3.2, fontface = "bold", color = "#1B4F72", fill = "white"
+  ) +
+  scale_color_viridis_c(option = "plasma", name = "Sharpe Ratio") +
+  scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(
+    title    = "Constrained Global Balanced Efficient Frontier (Post-2010 Ledoit-Wolf Sigma)",
+    subtitle = "Subject to Long-Only, Single <= 35%, Bonds <= 25%, Equities <= 75%, Commods <= 15%, Global <= 60%",
+    x        = "Annualized Portfolio Volatility",
+    y        = "Annualized Expected Return"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+p_frontier
+```
+
+
+```{r}
+p_oos_wealth <- bt_results$returns %>%
+  group_by(Strategy) %>%
+  arrange(date) %>%
+  mutate(Wealth = cumprod(1 + Net_Ret)) %>%
+  ggplot(aes(x = date, y = Wealth, color = Strategy)) +
+  geom_line(linewidth = 1.05) +
+  scale_color_manual(values = c(
+    "MinVol"     = "#1B4F72",
+    "MV_Gamma5"  = "#D35400",
+    "Max_Sharpe" = "#8E44AD",
+    "ERC"        = "#1E8449"
+  )) +
+  labs(
+    title    = "Quarterly Rebalanced Out-of-Sample Cumulative Wealth (10-Year Rolling Lookback)",
+    subtitle = "Net of 15 bps quarterly rebalancing costs; all brief constraints enforced at every rebalance date",
+    x        = NULL,
+    y        = "Cumulative Wealth (Base = 1.00)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", plot.title = element_text(face = "bold"))
+p_oos_wealth
+```
+
+
+```{r}
+# 3. Capital Weights vs. Risk Contribution Comparison
+p_risk_comp <- risk_budget_table %>%
+  pivot_longer(-Asset_Class, names_to = "Metric", values_to = "Share") %>%
+  separate(Metric, into = c("Type", "Strategy"), sep = "_", extra = "merge") %>%
+  mutate(Type = recode(Type, "W" = "Capital Weight (%)", "RC" = "Risk Contribution (%)")) %>%
+  ggplot(aes(x = Strategy, y = Share, fill = Asset_Class)) +
+  geom_col(position = "stack", width = 0.58) +
+  facet_wrap(~ Type) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("Equities" = "#2E86C1", "Bonds" = "#28B463", "Commodities" = "#F39C12")) +
+  labs(
+    title    = "Capital Allocation vs. True Portfolio Risk Contribution",
+    subtitle = "Illustrating how Equities dominate variance in MV portfolios compared to MinVol and ERC",
+    x        = NULL,
+    y        = "Portfolio Share (%)",
+    fill     = "Asset Class"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", plot.title = element_text(face = "bold"))
+p_risk_comp
 ```
 

@@ -15,6 +15,7 @@ daily_yield_to_monthly_ret <- function(df, maturity = 10, freq = 2) {
     rename_with(~ "Yield", any_of(c("Yield", "YTM", "yield", "Value")))
   
   n_periods <- maturity * freq
+  scale_div <- if (max(abs(df_std$Yield), na.rm = TRUE) > 1) 100 else 1
   
   df_std %>%
     transmute(
@@ -31,7 +32,7 @@ daily_yield_to_monthly_ret <- function(df, maturity = 10, freq = 2) {
     group_by(Tickers) %>%
     arrange(ym, .by_group = TRUE) %>%
     mutate(
-      y         = if_else(abs(Yield) > 0.5, Yield / 100, Yield),
+      y = Yield / scale_div,
       y_lag     = lag(y),
       dy        = y - y_lag,
       disc      = (1 + y_lag / freq)^(-n_periods),
