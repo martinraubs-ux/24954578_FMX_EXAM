@@ -123,28 +123,44 @@ To reference a section, you have to set a label using ``\\label'' in R, and then
 # Data  {-}
 
 ```{r}
+SafeCore <- read_rds("data/SafeCore.rds")
+# Factor Scores per constituent: lower values mean a lower score to the factor.
+# E.g. Value of -2 means an expensive stock.
+Factor_Scores <- read_rds("data/Factor_Scores.rds")
+Idx_Daily <- read_rds("data/Index_Returns_Daily.rds")
+# Stock returns
+Stock_returns_daily <- read_rds("./data/Stock_Returns_Daily.rds")
+```
 
+## PART B
+###  Did SafeCore navigate volatility well? 
+Compare the fund’s volatility, beta, maximum drawdown, and up and down capture against the Capped SWIX, in calm versus stressed periods. Since volatility isn’t a design input, any result is incidental, so say that plainly.  
+```{r}
+# Benchmark (J433) daily returns - check the ticker label in your index file:
+Bench_returns <-
+    Idx_Daily
+    filter(Tickers == "J433TR Index") %>%
+    arrange(date) %>%
+    mutate(Mkt = Price / lag(Price) - 1) %>%
+    filter(!is.na(Mkt)) %>%
+    select(date, Mkt)
 ```
 
 
+### Where does the volatility come from?
+Use the stock and sector risk contributions (section 7c), the PC1 share and the ENB. If ENB falls in stressed periods, the diversification is weakest when it is needed most.
 
-```{r Figure1, warning =  FALSE, fig.align = 'center', fig.cap = "Caption Here \\label{Figure1}", fig.height = 3, fig.width = 6, dev = 'png'}
-  # This is just a random plot to show you a plot. This is done if the getwd() does not point to your Template's directory.
-  # Set WD below to your project's working directory.
+### What are the factor exposures? 
+Show the active low-vol and momentum scores and the regression betas. If the fund is below benchmark on low-vol, that explains higher volatility. Agreement between your scores and the third party’s strengthens the finding.
 
-  g <-
-  ggplot(data = mtcars) +
-  geom_point(aes(x = disp, y = hp, color = cyl)) +
-  theme_bw() +
-  # theme(legend.position = "none") +
-  theme(plot.title = element_text(size = 10)) +
-  theme(axis.title = element_text(size = 10),
-        axis.title.x = element_text()) +
-  labs(y = "y-axis", x = "x-axis", title = "Some amazing plot")
+### Efficient diversifiers: I read these as stocks whose risk contribution is smaller than their weight. A stock’s risk contribution divided by its weight equals its beta to the portfolio, so a ratio below 1 means it reduces concentration. Section 7b ranks the stocks on this. Tell me if your brief means something different by “efficient”.
 
-g
 
-```
+## Part C
+
+Motivating Weighted vs. Unweighted CSV (J433 Capped SWIX):   Explain that Capped SWIX caps individual constituents at 10% to mitigate single-stock concentration (like Naspers/Prosus), yet large-caps still dominate institutional liquidity.Weighted CSV measures the actual investable dispersion available to an institutional fund benchmarked against J433, avoiding distortion from illiquid small-caps. Showing Equal-Weighted CSV alongside it reveals whether alpha is concentrated in mid/small caps or broad across the top 40.  
+
+Why SAVIUSD, MOVE, and V2X Are Perfect for Your Macro Analysis:   Macro Panic Regime (e.g., March 2020 COVID shock): V2X and SAVIUSD spike violently. Notice how rolling pairwise correlations (cor_median) and PCA Absorption (pca_pc1_abs) surge toward highs—stocks move in lockstep ("correlations go to 1 in a crisis"). Even though raw CSV spikes briefly due to extreme volatility, correlation-adjusted alpha opportunity collapses because stock selection fails when macro panic drives everything.   Rate & FX Divergence Regime (2022–2023 Hiking Cycle & Local Shocks): When MOVE (US Treasury rate volatility) and SAVIUSD (Rand volatility) stay elevated without a total liquidity freeze, correlations fall back down while Weighted CSV and Beta Dispersion stay elevated. Why? Because Rand weakness (SAVIUSD) splits the JSE into two opposing camps: Rand-hedges (miners, dual-listed industrials) surging while SA Inc. (banks, retailers, property) sell off—creating peak alpha opportunity for active managers.   
 
 # Conclusion
 

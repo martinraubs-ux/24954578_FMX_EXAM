@@ -31,7 +31,7 @@ calc_cross_sectional_metrics <- function(const_df, window = 60, start_date = "20
     arrange(date) %>%
     mutate(
       # Match the 60-day window of your correlation and idiosyncratic vol metrics
-      CSV_weighted_{window}d = slide_dbl(CSV_weighted, mean, .before = window - 1, .complete = TRUE),
-      CSV_equal_{window}d    = slide_dbl(CSV_equal, mean, .before = window - 1, .complete = TRUE)
+      CSV_weighted_60d = slide_dbl(CSV_weighted, mean, .before = window - 1, .complete = TRUE),
+      CSV_equal_60d    = slide_dbl(CSV_equal, mean, .before = window - 1, .complete = TRUE)
     )
 }
