@@ -11,15 +11,15 @@ plot_macro_drivers <- function(df, macro_pattern = "SAVI|V2X|MOVE|VIX|EPU|CVIX")
   }
   
   df %>%
-    select(date, CSV_weighted_21d, cor_median, all_of(valid_macros)) %>%
+    select(date, CSV_weighted_60d, cor_median, all_of(valid_macros)) %>%
     # Pivot macro factors FIRST so missing dates in one series don't drop others
     pivot_longer(cols = all_of(valid_macros), names_to = "Macro_Factor", values_to = "Macro_Val") %>%
-    filter(!is.na(Macro_Val), !is.na(CSV_weighted_21d), !is.na(cor_median)) %>%
+    filter(!is.na(Macro_Val), !is.na(CSV_weighted_60d), !is.na(cor_median)) %>%
     # Standardize within each Macro_Factor group
     group_by(Macro_Factor) %>%
     mutate(
       Macro_Z = as.numeric(scale(Macro_Val)),
-      CSV_Z   = as.numeric(scale(CSV_weighted_21d)),
+      CSV_Z   = as.numeric(scale(CSV_weighted_60d)),
       Cor_Z   = as.numeric(scale(cor_median))
     ) %>%
     ungroup() %>%

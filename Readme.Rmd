@@ -10,18 +10,14 @@ rm(list = ls()) # Clean your environment:
 gc() # garbage collection - It can be useful to call gc after a large object has been removed, as this may prompt R to return memory to the operating system.
 library(tidyverse)
 list.files('./code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
-list.files('Questions/Question 1/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+
 ```
 ```{r Libraries, include=FALSE}
 pacman::p_load(PerformanceAnalytics, tidyverse, rmsfuns, tbl2xts, rugarch, kableExtra, fredr,
                scales,MTS, rmgarch, ggthemes, patchwork)
 ```
 
-# Question 1
-
-
-## PART A
-```{r include=FALSE, loading data}
+```{r loading data, include=FALSE }
 # Economic policy uncertainty indexes:
 Uncertainty_Indexes <- "data/Econ_Uncertainty_Indexes.rds" %>% read_rds()
 # Implied volatility indexes:
@@ -53,7 +49,20 @@ LCL_Yield_Proxies <- read_rds("data/Monthly_LCL_Yield_Indexes.rds")
 
 ## Part C
 Size_Idx <- read_rds("data/Monthly_Index_Constituents.rds")
+
+# Question 3
+# Benchmark: Use the provided Capped SWIX return series as the benchmark
+# Active Peers:
+Active_Manager_Peers <- read_rds("data/Active_Managers.rds")
+# ABC Fund Returns:
+ABC_Fund <- read_rds("data/ABC_Fund.rds")
 ```
+
+# Question 1
+
+
+## PART A
+
 
 ### How has global volatility increased
 
@@ -486,8 +495,8 @@ Size_Idx %>% distinct(Fund) %>% print()
 bench      <- "CappedSWIX"   
 idx_levels <- c("LargeCaps", "MidCaps", "SmallCaps")  
 cons <- prep_constituents(Size_Idx) %>% 
-  mutate(Sector = replace_na(Sector, "Unclassified"),
-         Sector = ifelse(Index == "LargeCaps" & Sector == "Unclassified", na.omit(), Sector))
+  mutate(Sector = replace_na(Sector, "Unclassified"))#,
+         #Sector = ifelse(Index == "LargeCaps" & Sector == "Unclassified", drop_na(Sector), Sector))
 
 panel   <- build_stock_panel(cons, Stock_returns_daily)
 idx_ret <- build_index_returns(panel) %>% filter(Index %in% c(idx_levels, "CappedSWIX"))
@@ -531,12 +540,9 @@ sector_summary <- sector_ret %>%
             AnnVol = sd(Return) * sqrt(252),
             RetPerRisk = AnnRet / AnnVol, .groups = "drop") %>%
   mutate(Index = factor(Index, levels = idx_order))
-
-
 ```
 
 ```{r}
-
 ## Plotting sector returns
 sector_ret <- build_index_returns(panel %>% filter(Index %in% c(idx_levels, "CappedSWIX")),
                                   by = c("Index", "Sector"))
@@ -844,30 +850,490 @@ list(idx_ret = idx_ret, idx_vol = idx_vol, sector_vol = sector_vol,
 
 
 
+
+
+
+
+
+# Question 3
+```{r}
+# data prep
+bench_monthly <- Idx_Daily %>%
+  filter(Tickers == "J433") %>%
+  mutate(
+    date = as.Date(date),
+    ym   = floor_date(date, "month")
+  ) %>%
+  arrange(date) %>%
+  group_by(ym) %>%
+  summarise(
+    Name    = "Capped SWIX",
+    date    = max(date),
+    returns = prod(1 + Returns, na.rm = TRUE) - 1,
+    .groups = "drop"
+  ) %>%
+  select(Name, date, returns)
+
+peers_clean <- Active_Manager_Peers %>%
+  mutate(date = as.Date(date)) %>%
+  rename(returns = Returns)
+
+abc_clean <- ABC_Fund %>%
+  mutate(date = as.Date(date)) %>%
+  rename(returns = Returns)
+
+q3data <- bind_rows(bench_monthly, peers_clean, abc_clean) %>%
+  filter(date >= as.Date("2015-01-30") & date <= "2025-10-31")
+
+write_rds(q3data, "data/q3data.rds")
+```
+
+```{r}
+
+ bench    <- "Capped SWIX"
+fund     <- "ABC_Fund"
+win      <- 36L          # months: rolling beta / R2 / excess return window
+min_n    <- 5L           # min funds in a month to compute dispersion
+anon     <- TRUE        # anonymise peers for the conference
+
+pal <- c("ABC Fund" = "#D55E00", "Peer" = "grey60", "Benchmark" = "#1F3A5F")
+```
+
+
+
+
+## Data
+
+```{r data}
+df <- load_returns("data/q3data.rds") %>% add_role()
+if (anon) df <- anonymise_peers(df)
+
+df %>% group_by(role) %>% summarise(Funds = n_distinct(name), From = min(date), To = max(date)) %>% kable()
+
+
+```
+
+## 1. How high is typical peer beta?
+
+```{r rolling}
+roll <- rolling_stats(df, window = 36)
+```
+
+```{r beta-plot}
+# the data frame the function expects: columns date, name, role, rolling_beta
+beta_df <- roll %>%
+  drop_na(beta) %>%
+  rename(rolling_beta = beta)
+
+beta_plot <- plot_rolling_beta(beta_df)
+beta_plot
+```
+
+```{r beta-table}
+# Latest-window snapshot: peer median vs ABC
+roll %>% drop_na(beta) %>% group_by(date) %>% filter(any(role == "ABC Fund")) %>% ungroup() %>%
+  filter(date == max(date)) %>% group_by(role) %>%
+  summarise(across(c(beta, r2, te), median)) %>% kable(digits = 2, caption = "Latest rolling window (median)")
+```
+
+## 2. How much of each fund is just the market?
+
+```{r r2-plot}
+r2_plot <- plot_box_overlay(roll, r2,
+  title = "Rolling 36m R-squared vs CappedSWIX",
+  subtitle = "Lower = more of the fund's return pattern comes from something other than the market",
+  ylab = NULL, y_labels = percent_format(accuracy = 1))
+r2_plot
+```
+
+## 3. Do ABC's returns have different drivers?
+
+```{r resid-cor}
+wide  <- to_wide(df)
+funds <- wide %>% select(-date, -all_of(bench))
+
+# Strip out the market from each fund, then correlate what is left
+resids <- map_dfc(funds, function(x) {
+  ok <- complete.cases(x, wide[[bench]])
+  if (sum(ok) < 3L) return(rep(NA_real_, length(x)))
+  resid(lm(x ~ wide[[bench]], na.action = na.exclude))
+})
+
+driver_tbl <- inner_join(avg_pairwise_cor(funds), avg_pairwise_cor(resids),
+                         by = "name", suffix = c("_raw", "_resid")) %>%
+  left_join(distinct(df, name, role), by = "name")
+
+driver_tbl %>% group_by(role) %>% summarise(across(starts_with("avg_cor"), median)) %>% kable(digits = 2)
+```
+
+```{r driver-plot}
+driver_long <- driver_tbl %>%
+  drop_na(avg_cor_raw, avg_cor_resid) %>%
+  mutate(name = fct_reorder(name, avg_cor_resid)) %>%
+  pivot_longer(c(avg_cor_raw, avg_cor_resid), names_to = "measure", values_to = "cor") %>%
+  mutate(measure = recode(measure,
+                          avg_cor_raw = "Raw returns",
+                          avg_cor_resid = "After removing market"))
+
+driver_plot <- driver_long %>%
+  ggplot(aes(cor, name)) +
+  geom_line(aes(group = name), colour = "grey85", linewidth = 0.4) +
+  geom_line(
+    data = filter(driver_long, role == "ABC Fund"),
+    aes(group = name),
+    colour = pal[["ABC Fund"]],
+    linewidth = 1
+  ) +
+  geom_point(aes(colour = role, shape = measure), size = 2.5) +
+  geom_point(
+    data = filter(driver_long, role == "ABC Fund"),
+    aes(colour = role, shape = measure),
+    size = 3.5
+  ) +
+  scale_colour_manual(values = pal, guide = "none") +
+  scale_shape_manual(values = c("Raw returns" = 1, "After removing market" = 16), name = NULL) +
+  scale_y_discrete(breaks = fund) +
+  scale_x_continuous(labels = number_format(accuracy = 0.01)) +
+  labs(title = "How similar is each fund to the rest of the industry?",
+       subtitle = "Average correlation with other active funds",
+       x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(face = "bold", colour = pal[["ABC Fund"]]),
+    legend.position = "top"
+  )
+
+driver_plot
+```
+
+## 4. Relative performance over time
+
+```{r fan-data}
+ex <- rolling_excess(df, win)
+
+fan <- ex %>% group_by(date) %>%
+  summarise(p10 = quantile(excess[role == "Peer"], .10), p25 = quantile(excess[role == "Peer"], .25),
+            med = median(excess[role == "Peer"]),
+            p75 = quantile(excess[role == "Peer"], .75), p90 = quantile(excess[role == "Peer"], .90),
+            .groups = "drop") %>%
+  left_join(ex %>% filter(role == "ABC Fund") %>% select(date, abc = excess), by = "date")
+
+fan %>% drop_na(abc) %>% summarise(`Share of months ABC above peer median` = mean(abc > med)) %>%
+  kable(digits = 2)
+```
+
+```{r fan-plot}
+fan_plot <- fan %>% ggplot(aes(date)) +
+  geom_hline(yintercept = 0, colour = pal[["Benchmark"]], linetype = "dashed") +
+  geom_ribbon(aes(ymin = p10, ymax = p90), fill = "grey70", alpha = 0.35) +
+  geom_ribbon(aes(ymin = p25, ymax = p75), fill = "grey50", alpha = 0.45) +
+  geom_line(aes(y = med), colour = "grey30", linetype = "dotted") +
+  geom_line(aes(y = abc), colour = pal[["ABC Fund"]], linewidth = 1.2, na.rm = TRUE) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "ABC Fund vs the peer fan",
+       subtitle = "Rolling 36m annualised excess return. Bands = middle 80% / 50% of peers, dotted = median",
+       x = NULL, y = NULL) + theme_minimal()
+fan_plot
+```
+
+```{r rank-data}
+ranks <- calendar_ranks(df, bench = "Capped SWIX" )
+ranks %>% filter(role == "ABC Fund") %>% select(year, ret, rank, n_funds) %>% kable(digits = 3)
+```
+
+
+```{r}
+
+ranks_ordered <- ranks %>%
+  mutate(
+    name = fct_reorder(name, pct, .fun = mean),
+    year = factor(year)
+  )
+
+abc_row <- which(levels(ranks_ordered$name) == fund)
+
+abc_ranks <- ranks_ordered %>%
+  filter(role == "ABC Fund") %>%
+  mutate(
+    x_num = as.numeric(year),
+    lab   = sprintf("%d/%d", rank, n_funds)
+  )
+
+rank_plot <- ranks_ordered %>%
+  ggplot(aes(year, name, fill = pct)) +
+  geom_tile(colour = "white", linewidth = 0.1) +
+  geom_rect(
+    data = abc_ranks,
+    aes(
+      xmin = x_num - 0.5,
+      xmax = x_num + 0.5,
+      ymin = abc_row - 1.2,
+      ymax = abc_row + 1.2
+    ),
+    inherit.aes = FALSE,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.45
+  ) +
+  geom_text(
+    data = abc_ranks,
+    aes(x = year, y = abc_row + 1.5, label = lab),
+    inherit.aes = FALSE,
+    size = 3,
+    vjust = 0
+  ) +
+  scale_y_discrete(breaks = fund) +
+  scale_fill_gradient2(
+    low = "#B2182B", mid = "white", high = "#2166AC",
+    midpoint = 0.5, labels = percent_format(), name = "Percentile rank"
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Calendar-year ranking",
+    subtitle = "ABC Fund boxed: rank / number of funds",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal() +
+     theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold")
+    )
+
+rank_plot
+
+```
+
+
+Note: if `anon` is TRUE the ABC row keeps its name, so the `mutate(name = fund)` above matches. If you change `fund` to a name that gets anonymised, adjust accordingly.
+
+## 5. Does ABC do well when dispersion is high?
+
+```{r dispersion-data}
+panel <- dispersion_panel(df, min_n)
+
+abc_panel <- panel %>% filter(role == "ABC Fund") %>%
+  mutate(bucket = factor(ntile(dispersion, 3), labels = c("Low", "Medium", "High")))
+
+bucket_tbl <- abc_panel %>% group_by(bucket) %>%
+  summarise(AvgRel = mean(rel), HitRate = mean(rel > 0), Months = n(), .groups = "drop")
+kable(bucket_tbl, digits = 4)
+```
+
+```{r dispersion-fit}
+# Formal test: is the slope of relative return on dispersion positive?
+lm(rel ~ dispersion, data = abc_panel) %>% tidy(conf.int = TRUE) %>% kable(digits = 4)
+```
+
+```{r dispersion-plots}
+disp_scatter <- abc_panel %>% ggplot(aes(dispersion, rel)) +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  geom_point(colour = pal[["ABC Fund"]], alpha = 0.7, size = 2) +
+  geom_smooth(method = "lm", colour = "black", fill = "grey80") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "Monthly relative return vs dispersion",
+       x = "Cross-sectional dispersion (pp)", y = "ABC minus peer median") + theme_minimal()
+
+disp_bars <- bucket_tbl %>% ggplot(aes(bucket, AvgRel)) +
+  geom_col(fill = pal[["ABC Fund"]], width = 0.6) +
+  geom_hline(yintercept = 0) +
+  geom_text(aes(label = paste0("Beats median\nin ", percent(HitRate, 1), " of months")), vjust = -0.3, size = 3.2) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1), expand = expansion(mult = c(0.05, 0.25))) +
+  labs(title = "By dispersion tercile", x = NULL, y = "Avg monthly outperformance") + theme_minimal()
+
+#disp_plot <- disp_scatter + disp_bars + plot_layout(widths = c(1.3, 1))
+disp_plot <- disp_scatter +   theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold")
+    )
+disp_plot
+```
+
+```{r slopes}
+# Same regression for every fund: is ABC unusual?
+slopes <- dispersion_slopes(panel)
+slopes %>% arrange(desc(estimate)) %>% select(name, role, estimate, conf.low, conf.high, p.value) %>%
+  kable(digits = 4)
+```
+
+
+```{r}
+library(ggrepel)
+
+slopes_df <- slopes %>% 
+  mutate(name = fct_reorder(name, estimate))
+
+slopes_plot <- slopes_df %>%
+  ggplot(aes(estimate, name, colour = role)) +
+  geom_vline(xintercept = 0, colour = "grey50") +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), size = 0.35) +
+  geom_text_repel(
+    data = filter(slopes_df, name %in% c(fund, bench)),
+    aes(label = name, colour = role),
+    fontface = "bold",
+    size = 3.5,
+    nudge_x = -0.002,
+    direction = "y",
+    box.padding = 0.5,
+    min.segment.length = 0,
+    show.legend = FALSE
+  ) +
+  scale_colour_manual(values = pal, guide = "none") +
+  scale_y_discrete(breaks = NULL) +
+  scale_x_continuous(labels = percent_format(accuracy = 0.01)) +
+  labs(title = "Who benefits most when dispersion rises?",
+       subtitle = "Extra monthly return vs peer median per +1pp of dispersion (95% CI)",
+       x = NULL, y = NULL) + 
+  theme_minimal() +
+      theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.major.y = element_blank(),
+      plot.title = element_text(face = "bold")
+    )
+slopes_plot
+```
+
+```{r}
+# Compute cumulative wealth index and drawdown series for ABC Fund and Capped SWIX
+dd_df <- df %>%
+  filter(name %in% c(fund, bench)) %>%
+  filter(date >= "2017-01-31" & date <= "2025-10-31") %>% 
+  group_by(name, role) %>%
+  arrange(date, .by_group = TRUE) %>%
+  mutate(
+    wealth   = cumprod(1 + ret),
+    peak     = cummax(wealth),
+    drawdown = (wealth / peak) - 1
+  ) %>%
+  ungroup()
+
+# Quick summary table of max drawdown and date of trough
+dd_df %>%
+  group_by(name, role) %>%
+  summarise(
+    max_dd      = min(drawdown),
+    trough_date = date[which.min(drawdown)],
+    .groups     = "drop"
+  ) %>%
+  kable(digits = 4)
+
+# Plot drawdowns on the same panel
+drawdown_plot <- dd_df %>%
+  ggplot(aes(x = date, y = drawdown, colour = role, fill = role)) +
+  geom_hline(yintercept = 0, colour = "grey50", linewidth = 0.4) +
+  geom_area(alpha = 0.15, position = "identity") +
+  geom_line(linewidth = 0.8) +
+  scale_colour_manual(values = pal, name = NULL) +
+  scale_fill_manual(values = pal, name = NULL) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title    = "Historical Drawdowns: ABC Fund vs Capped SWIX",
+    subtitle = "Peak-to-trough decline from cumulative return high-water mark",
+    x        = NULL,
+    y        = NULL, caption = "Data for ABC Fund ends in October 2025"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title = element_text(face = "bold"))
+
+drawdown_plot
+```
+
+## Save charts for the slides 
+
+```{r save}
+
+list(`1_beta` = beta_plot, `2_r2` = r2_plot, `3_drivers` = driver_plot, `4_fan` = fan_plot,
+     `5_ranks` = rank_plot, `6_dispersion` = disp_plot, `7_slopes` = slopes_plot,`78_dd` = drawdown_plot) %>%
+  iwalk(~ ggsave(file.path("figures", paste0(.y, ".png")), .x, width = 10.5, height = 5, dpi = 200, bg = "white"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Question 4
+
+```{r Constructing bond TRIs}
+Bond_Yields <- construct_bond_tri(Bond_Yields) %>%  select(-c(Bond_Ret, mod_dur))
+```
+
+```{r}
+Q4_data <- bind_rows(
+  # 1. MSCI Global Indexes (Daily TRI -> Monthly Returns)
+  daily_tri_to_monthly(MSCI),
+  
+  # 2. Local Vanilla + 2 Factor Indexes (Daily Returns -> Monthly Returns)
+  daily_ret_to_monthly(
+    Idx_Daily,
+    keep_tickers = c("STXMOMJ433", "STXVALJ433", "J200", "J201")
+  ),
+  
+  # 3. 10Y Global Bonds (Daily Yields -> Monthly Bond Total Returns)
+  daily_yield_to_monthly_ret(Bond_Yields),
+  
+  # 4. LCL Yield Proxies (Already Monthly Returns)
+  prep_monthly_lcl(LCL_Yield_Proxies),
+  
+  # 5. Commodities (Daily TRI -> Monthly Returns)
+  daily_tri_to_monthly(Commods)
+) %>%
+  distinct(date, Tickers, .keep_all = TRUE) %>%
+  arrange(date, Tickers)
+
+# Spread into wide monthly return xts matrix for covariance estimation & optimization
+return_mat <- Q4_data %>% filter(date >= "2015-01-31") %>% 
+  tbl_xts(cols_to_xts = Returns, spread_by = Tickers)
+
+colSums(!is.na(return_mat))
+return_mat <- return_mat %>% impute_missing_returns(impute_returns_method = "Drawn_Distribution_Own") # Own distribution because the different assets vary
+```
+
 ```{r}
 Q4_data <- 
               # MSCI
-              MSCI %>% select(date, Ticker, TRI) %>% 
+              MSCI %>% select(date, Tickers = Ticker, TRI) %>% 
   
               # Vanilla
               bind_rows(Idx_Daily %>%  filter(Tickers %in% c("STXMOMJ433", 
                                                              "STXVALJ433"
                                                              ,"J200"
                                                              ,"J201")) %>% 
-                                           select(date, Tickers, Returns) ) %>% 
+                                           arrange(date) %>% group_by(Tickers) %>% 
+                                           mutate(TRI= 100 *cumprod(1+Returns)) %>% 
+                                           select(date, Tickers, TRI ) ) %>% 
   
               # 10Y bonds
-              bind_rows(Bond_Yields %>% mutate(TRI = ,
-                                               Returns = )) %>% 
-                                        select(date, Tickers, Returns) %>% 
+              bind_rows(Bond_Yields%>%  select(date, Tickers = Ticker, TRI)) %>%
+  
               # LCL
-              bind_rows(LCL_Yield_Proxies %>% select(-Name)) %>% 
+              bind_rows(LCL_Yield_Proxies %>% arrange(date) %>% group_by(Tickers) %>% 
+                                           mutate(TRI= 100 *cumprod(1+Returns)) %>% 
+                                           select(date, Tickers, TRI )) %>%  
   
               # Commodoties
-              bind_rows(Commods)
+              bind_rows(Commods %>%  select(date, Tickers = Ticker, TRI)) %>% 
+            
+              arrange(date) %>% group_by(Tickers) %>% 
+              mutate(Returns = (TRI-lag(TRI))/lag(TRI)) %>% select(-TRI) %>% ungroup()
    
-
+return_mat <- Q4_data %>% tbl_xts(cols_to_xts = Returns, spread_by = Tickers )
 return_mat <- bind_rows(SPX,
             LSTA_3, 
             CELFX,
