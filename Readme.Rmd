@@ -498,7 +498,6 @@ idx_ret <- build_index_returns(panel) %>% filter(Index %in% c(idx_levels, "Cappe
 sector_ret <- build_index_returns(panel %>% filter(Index %in% idx_levels),
                                   by = c("Index", "Sector"))
 
-
 sector_cols <- c(Financials = "#1b9e77", Industrials = "#d95f02", Property = "#7570b3",
                  Resources = "#e6ab02", Unclassified = "grey70")
 
@@ -524,6 +523,20 @@ sector_exposure_plot <-
 sector_exposure_plot
 ggsave("figures/sector_exposure_plot.png",sector_exposure_plot)
 
+sector_summary <- sector_ret %>%
+  filter(Index %in% idx_order) %>%
+  group_by(Index, Sector) %>%
+  filter(n() > 500) %>%
+  summarise(AnnRet = prod(1 + Return)^(252 / n()) - 1,
+            AnnVol = sd(Return) * sqrt(252),
+            RetPerRisk = AnnRet / AnnVol, .groups = "drop") %>%
+  mutate(Index = factor(Index, levels = idx_order))
+
+
+```
+
+```{r}
+
 ## Plotting sector returns
 sector_ret <- build_index_returns(panel %>% filter(Index %in% c(idx_levels, "CappedSWIX")),
                                   by = c("Index", "Sector"))
@@ -537,15 +550,9 @@ sector_growth_plot <- plot_sector_growth(sector_ret_clean %>% filter(Index %in% 
 sector_growth_plot
 ggsave("figures/sector_growth_plot.png",sector_growth_plot)
 
-sector_summary <- sector_ret %>%
-  filter(Index %in% idx_order) %>%
-  group_by(Index, Sector) %>%
-  filter(n() > 500) %>%
-  summarise(AnnRet = prod(1 + Return)^(252 / n()) - 1,
-            AnnVol = sd(Return) * sqrt(252),
-            RetPerRisk = AnnRet / AnnVol, .groups = "drop") %>%
-  mutate(Index = factor(Index, levels = idx_order))
+```
 
+```{r}
 sector_summary %>% arrange(Index, desc(RetPerRisk)) %>% knitr::kable(digits = 3)
 
 sector_riskret_plot <- sector_summary %>%
@@ -598,6 +605,7 @@ sector_vol <- sector_ret %>% arrange(date) %>%
 
 # Lets Facet wrap on Index showing conditional volatility
 eGARCH_vol_plot <- idx_vol %>% ggplot(aes(date, Sigma, colour = Index)) + geom_line() +
+  facet_wrap("Index")+
   scale_y_continuous(labels = percent) +
   labs(title = "e-GARCH annualised volatility", x = NULL, y = NULL) + theme_minimal()
 eGARCH_vol_plot
@@ -629,8 +637,8 @@ rr_plot
 
 # Risk/return summary
 summary_tbl <- idx_ret %>% group_by(Index) %>%
-  summarise(AnnRet = prod(1 + Return)^(252 / n()) - 1,
-            AnnVol = sd(Return) * sqrt(252),
+  summarise(AnnRet = (prod(1 + Return)^(252 / n()) - 1)*100,
+            AnnVol = sd(Return) * sqrt(252)*100,
             RetPerRisk = AnnRet / AnnVol,
             MaxDD = min(cumprod(1 + Return) / cummax(cumprod(1 + Return)) - 1))
 kable(summary_tbl, digits = 3)
@@ -642,7 +650,7 @@ regimes <- idx_vol %>% filter(Index == bench) %>%
   select(-Index)
 
   regime_tbl <- idx_ret %>% inner_join(regimes, by = "date") %>% group_by(Index, Regime) %>%
-  summarise(AnnRet = mean(Return) * 252, AnnVol = sd(Return) * sqrt(252), .groups = "drop")
+  summarise(AnnRet = (mean(Return) * 252)*100, AnnVol = sd(Return) * sqrt(252)*100, .groups = "drop")
 ```
 
 Calculating alpha share
