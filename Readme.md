@@ -57,7 +57,7 @@ space than for the US and Europe. Despite the spike the inidices appears
 to be relatively close to their long term average. Definitely less than
 GFC to about 2013 and Covid time periods.
 
-### Absolute returns plot
+### Daily returns plot
 
 ``` r
 abs_return_plot <- Idx_Daily %>% 
@@ -70,8 +70,8 @@ abs_return_plot <- Idx_Daily %>%
               geom_line(linewidth = 0.8) +
               facet_wrap("Tickers", scales = "free_y") +
               labs(
-              title = "Daily Implied Volatility Indices",
-              subtitle = "Global Comparison across US, Europe and EM's",
+              title = "Daily Returns voaltility",
+              subtitle = "Global Comparison across South African Indices",
               x = "Date",
               y = "Index",
               color = "Ticker"  ) +
@@ -107,6 +107,13 @@ ggsave("Questions/Question 1/Write_Up/figures/abs_return_plot.png", abs_return_p
     ## • colour : "Ticker"
 
 ### Rolling SD
+
+Daily return plots reveal sharp spikes, but high-frequency noise makes
+it difficult to judge whether baseline market risk has structurally
+shifted. Computing a 120-day (roughly four-month) rolling annualised
+standard deviation smooths out single-day outliers and allows me to
+compare the persistence and magnitude of recent volatility regimes
+against historical stress episodes.
 
 ``` r
 rolling_sd_plot <- calc_rolling_sd(Idx_Daily, n = 120, annualize = TRUE) %>% 
@@ -147,7 +154,13 @@ ggsave("Questions/Question 1/Write_Up/figures/rolling_sd_plot.png", rolling_sd_p
 
 ### rmgarch FOR SPILLOVERS
 
-Doing GARCH between MSCI INDEXES and Capped SWIX
+Observing parallel spikes in global and local volatility does not
+confirm that shocks are actively transmitting across borders rather than
+occurring coincidental to local news. To test for time-varying contagion
+and integration, I fit a DCC-GARCH model between major global equity
+blocks (US, Europe, China, Japan) and the Capped SWIX (J433), isolating
+how conditional correlations spike during periods of global market
+stress.
 
 ``` r
 # DCC_GARCH data
@@ -300,6 +313,14 @@ ggsave("Questions/Question 1/Write_Up/figures/g1.png", g1)
 
 ### Doing PCA to obtain main sources of portfolio volatility
 
+A portfolio can hold dozens of individual stocks yet still behave like a
+single concentrated bet if its holdings load heavily on one underlying
+macro or market factor. Applying Principal Component Analysis (PCA) to
+the covariance matrix of SafeCore’s holdings—both at the latest
+rebalance and on a rolling basis—strips away nominal position counts to
+reveal the true Effective Number of Bets (ENB) and how much total risk
+is governed by the first few statistical factors.
+
 ``` r
 # Daily returns for every stock the fund has held:
  fund_tickers <- SafeCore %>% distinct(Tickers) %>% pull(Tickers)
@@ -314,7 +335,7 @@ ggsave("Questions/Question 1/Write_Up/figures/g1.png", g1)
  w_date <- max(SafeCore$date)
  w <- SafeCore %>% filter(date == w_date) %>% select(Tickers, Weight) %>% tibble::deframe()
  win <- data_wide %>% filter(date <= w_date) %>% tail(250)
- rc <- Risk_Concentration(win, w, universe = "held")
+ rc <- Risk_Concentration(win, w, scale. = TRUE, universe = "held")
  rc$port_vol * sqrt(252)   # annualised volatility (daily data)
 ```
 
@@ -344,29 +365,29 @@ ggsave("Questions/Question 1/Write_Up/figures/g1.png", g1)
 ```
 
     ## # A tibble: 38 × 6
-    ##    PC    Exposure Eigenvalue Var_Contribution     Share Cum_Share
-    ##    <fct>    <dbl>      <dbl>            <dbl>     <dbl>     <dbl>
-    ##  1 PC1   -0.151     0.00624      0.000143     0.867         0.867
-    ##  2 PC2   -0.0238    0.00204      0.00000116   0.00700       0.874
-    ##  3 PC3   -0.0886    0.00142      0.0000111    0.0674        0.941
-    ##  4 PC4   -0.0304    0.000911     0.000000845  0.00511       0.946
-    ##  5 PC5   -0.0613    0.000624     0.00000235   0.0142        0.961
-    ##  6 PC6    0.0649    0.000525     0.00000221   0.0134        0.974
-    ##  7 PC7    0.0550    0.000483     0.00000146   0.00885       0.983
-    ##  8 PC8    0.0130    0.000433     0.0000000729 0.000441      0.983
-    ##  9 PC9    0.00541   0.000376     0.0000000110 0.0000667     0.983
-    ## 10 PC10   0.0462    0.000347     0.000000740  0.00448       0.988
+    ##    PC     Exposure Eigenvalue Var_Contribution    Share Cum_Share
+    ##    <fct>     <dbl>      <dbl>            <dbl>    <dbl>     <dbl>
+    ##  1 PC1   -0.00308       10.6      0.000101     0.609        0.609
+    ##  2 PC2   -0.00364        3.94     0.0000522    0.316        0.925
+    ##  3 PC3    0.000523       2.23     0.000000611  0.00369      0.928
+    ##  4 PC4   -0.000275       1.91     0.000000144  0.000873     0.929
+    ##  5 PC5    0.000613       1.59     0.000000597  0.00361      0.933
+    ##  6 PC6    0.000527       1.46     0.000000405  0.00245      0.935
+    ##  7 PC7   -0.000534       1.39     0.000000398  0.00241      0.938
+    ##  8 PC8   -0.000217       1.29     0.0000000606 0.000367     0.938
+    ##  9 PC9   -0.00138        1.08     0.00000205   0.0124       0.951
+    ## 10 PC10   0.000836       1.06     0.000000743  0.00450      0.955
     ## # ℹ 28 more rows
 
 ``` r
  rc$ENB                    # effective number of independent bets
 ```
 
-    ## [1] 1.887408
+    ## [1] 2.915289
 
 ``` r
 # Rolling, with monthly rebalanced weights:
- roll <- Roll_Risk_Concentration(data_wide, SafeCore, lookback = 250, step = 5, n_pcs = 3)
+ roll <- Roll_Risk_Concentration(data_wide, SafeCore, lookback = 250, step = 5, n_pcs = 3, scale. = TRUE)
 
 SafeCore_eff_num_bets <-  roll %>%
    ggplot() + geom_line(aes(date, ENB)) +
@@ -432,16 +453,16 @@ prop_var
 ![](Readme_files/figure-gfm/unnamed-chunk-11-2.png)<!-- -->
 
 ``` r
-ggsave("figures/q1partB/prop_var.png", prop_var)
+ggsave("figures/q1partB/prop_var.png", prop_var, width = 11)
 ```
 
-    ## Saving 7 x 5 in image
+    ## Saving 11 x 5 in image
 
 ``` r
-ggsave("Questions/Question 1/Write_Up/figures/prop_var.png", prop_var)
+ggsave("Questions/Question 1/Write_Up/figures/prop_var.png", prop_var, width = 11)
 ```
 
-    ## Saving 7 x 5 in image
+    ## Saving 11 x 5 in image
 
 ``` r
 # FactoMineR / factoextra plots for the same snapshot:
@@ -505,13 +526,20 @@ share_port_var_pc <-  rc$pc_rc %>% slice(1:10) %>%
     ## with windowsFonts().
 
 ``` r
+share_port_var_pc
+```
+
+![](Readme_files/figure-gfm/unnamed-chunk-12-4.png)<!-- -->
+
+``` r
 ggsave("figures/q1partB/share_port_var_pc.png", plot = share_port_var_pc, width = 8, height = 5, dpi = 300)
 ```
 
 ### Did SafeCore navigate volatility well?
 
 Creating Fin stats table to analyse how well safe core handled
-volatility
+volatility. Downside risk meaures will give good indication as well as
+rolling plot
 
 ``` r
 # Envisaged parameters:
@@ -678,11 +706,16 @@ annualised with 252 days)
 
 ### Where does volatility come from
 
-Stock-level and sector-level contributions to portfolio variance at the
-latest rebalance (covariance from the 250 days ending then).
+Aggregate portfolio volatility masks which specific positions or
+industries are driving risk under the hood. Decomposing total portfolio
+variance into marginal and percentage risk contributions at the latest
+rebalance lets us compare each stock and sector’s capital weight against
+its actual share of portfolio risk, identifying where risk budgets are
+disproportionately consumed. Stock-level and sector-level contributions
+to portfolio variance at the latest rebalance (covariance from the 250
+days ending then).
 
 ``` r
-# Needs: rc, w_date, SafeCore (from the Part B chunks above)
 Stock_RC <-
   rc$stock_rc %>%
   mutate(Weight = Weight / sum(Weight)) %>%               # make sure weights sum to 1
@@ -713,7 +746,7 @@ Stock_RC %>%
 
 ``` r
 # Weight vs share of risk, top 15 risk contributors:
-Stock_RC %>%
+top15rc <- Stock_RC %>%
   slice_max(Risk_Contribution, n = 15) %>%
   select(Tickers, Weight, Risk_Contribution) %>%
   pivot_longer(-Tickers, names_to = "Measure", values_to = "Share") %>%
@@ -729,7 +762,15 @@ Stock_RC %>%
     ## Warning in loadfonts_win(quiet = quiet): OS is not Windows. No fonts registered
     ## with windowsFonts().
 
+``` r
+top15rc
+```
+
 ![](Readme_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
+
+``` r
+ggsave("figures/q1partB/top15rc.png", plot = top15rc, width = 8, height = 5, dpi = 300)
+```
 
 ``` r
 # Sector view:
@@ -822,6 +863,13 @@ roll_vol %>%
 
 ### How did SafeCore behave when volatility was high?
 
+Aggregate portfolio volatility masks which specific positions or
+industries are driving risk under the hood. Decomposing total portfolio
+variance into marginal and percentage risk contributions at the latest
+rebalance lets us compare each stock and sector’s capital weight against
+its actual share of portfolio risk, identifying where risk budgets are
+disproportionately consumed.
+
 ``` r
 Monthly <-
   Ret_xts %>%
@@ -908,8 +956,7 @@ ggsave("figures/csv_dispersion_plot.png", csv_dispersion_plot)
     ## Saving 7 x 5 in image
 
 Chart 2 (Correlation Regime): Rolling 60-day median pairwise
-correlation + interquartile ribbon (or Rolling PCA 1st component
-variance explained / Sector DCC-GARCH).
+correlation + interquartile ribbon
 
 ``` r
 correlation_regimes_plot <- plot_correlation_regimes(alpha_master_df)
@@ -961,6 +1008,15 @@ ggsave("figures/macro_drivers_plot.png", macro_drivers_plot)
 
 # Question 2
 
+### Index Construction and Return Aggregation
+
+Before comparing risk and return across the market-cap spectrum, I need
+a consistent bottom-up return series for LargeCaps, MidCaps, SmallCaps,
+and the CappedSWIX benchmark. Mapping month-end constituent weights onto
+daily stock returns ensures that index performance reflects true
+historical weightings and survivorship-free composition rather than
+static backfills.
+
 ``` r
 glimpse(Size_Idx); glimpse(Stock_returns_daily)
 ```
@@ -1002,6 +1058,15 @@ cons <- prep_constituents(Size_Idx) %>%
 panel   <- build_stock_panel(cons, Stock_returns_daily)
 idx_ret <- build_index_returns(panel) %>% filter(Index %in% c(idx_levels, "CappedSWIX"))
 ```
+
+### Sectors
+
+Size indices are rarely pure plays on company scale—they often carry
+sharp structural industry tilts. Plotting month-end sector weights from
+2007 to 2026 checks whether LargeCaps are heavily skewed toward globally
+exposed Resources and Financials while MidCaps and SmallCaps tilt toward
+domestic Industrials and Property, helping me separate size effects from
+sector effects.
 
 ``` r
 # Sector-stratified returns inside each index (sector sub-portfolios)
@@ -1106,7 +1171,13 @@ sector_riskret_plot <- sector_summary %>%
   theme_minimal(base_size = 11)
 ```
 
-Stock concentration
+\###Stock Concentration (Effective Number of Stocks) A size index can
+appear diversified by constituent count yet still be dominated by a
+handful of mega-cap names. Computing the Herfindahl-Hirschman Index
+inverse ($\text{EffN} = 1/\text{HHI}$) alongside Top 10 weight shares
+quantifies true breadth over time, showing how much single-stock
+concentration risk investors actually take on in each segment relative
+to the CappedSWIX
 
 ``` r
 conc <- concentration(cons) %>% filter(Index %in% c(idx_levels, bench))
@@ -1124,6 +1195,15 @@ conc %>% group_by(Index) %>%
 | LargeCaps  |  39.75 | 15.08 |  0.66 |
 | MidCaps    |  53.25 | 36.31 |  0.41 |
 | SmallCaps  |  59.30 | 42.72 |  0.35 |
+
+\###Conditional Volatility Modelling (eGARCH) Because financial return
+volatility clusters and often reacts asymmetrically to negative shocks
+(the leverage effect), standard unconditional standard deviation misses
+time-varying risk dynamics. Fitting candidate GARCH specifications and
+selecting eGARCH(1,1) via information criteria lets us extract
+conditional annualised volatility paths across size tiers, while the
+sector-by-size heatmap pinpoints which specific industry pockets drive
+aggregate index turbulence.
 
 ``` r
 # One information-criteria table per index
@@ -1192,7 +1272,16 @@ cvol_plot <- cvol %>% ggplot(aes(date, MedianVol, colour = Index)) + geom_line()
   labs(title = "Median constituent volatility (60d, annualised)") + theme_minimal()
 ```
 
-Rolling returns and regime stratification
+### Rolling returns and regime stratification
+
+Full-sample averages hide long cycles of size outperformance and
+underperformance, as well as how smaller stocks behave during market
+stress. Examining 1-year and 3-year rolling annualised returns tracks
+the persistence of size premia across cycles, while stratifying
+performance across Low-, Mid-, and High-volatility terciles (defined by
+CappedSWIX conditional volatility) tests whether MidCaps and SmallCaps
+suffer disproportionate liquidity and drawdown penalties when market
+stress spikes.
 
 ``` r
 rr <- bind_rows(rolling_ret(idx_ret, 1), rolling_ret(idx_ret, 3))
@@ -1235,7 +1324,7 @@ regimes <- idx_vol %>% filter(Index == bench) %>%
   summarise(AnnRet = (mean(Return) * 252)*100, AnnVol = sd(Return) * sqrt(252)*100, .groups = "drop")
 ```
 
-Calculating alpha share
+### Calculating alpha share
 
 ``` r
 AS <- active_share(cons, bench, idx_levels)
@@ -1250,8 +1339,9 @@ as_plot
 
 # Question 3
 
+## data prep
+
 ``` r
-# data prep
 bench_monthly <- Idx_Daily %>%
   filter(Tickers == "J433") %>%
   mutate(
@@ -1309,6 +1399,13 @@ df %>% group_by(role) %>% summarise(Funds = n_distinct(name), From = min(date), 
 
 ## 1. How high is typical peer beta?
 
+A common critique of active equity managers is that they charge active
+fees while simply riding broad market direction. Estimating rolling
+36-month CAPM betas against the Capped SWIX measures how aggressively
+ABC Fund and its peers scale market exposure over time, showing whether
+ABC maintains a structurally more defensive or aggressive stance than
+the median peer.
+
 ``` r
 roll <- rolling_stats(df, window = 36)
 ```
@@ -1341,6 +1438,13 @@ Latest rolling window (median)
 
 ## 2. How much of each fund is just the market?
 
+Beta captures sensitivity to market direction, but $R^2$ reveals what
+share of a fund’s total return variance is merely explained by the
+benchmark. Examining the distribution of rolling 36-month $R^2$ across
+peers versus ABC Fund exposes “closet indexers” whose returns closely
+track the Capped SWIX, while testing whether ABC genuinely diverges from
+passive benchmark movements.
+
 ``` r
 r2_plot <- plot_box_overlay(roll, r2,
   title = "Rolling 36m R-squared vs CappedSWIX",
@@ -1352,6 +1456,13 @@ r2_plot
 ![](Readme_files/figure-gfm/r2-plot-1.png)<!-- -->
 
 ## 3. Do ABC’s returns have different drivers?
+
+Active managers can look differentiated from the benchmark yet still
+crowd into the exact same consensus trades as one another. By stripping
+out the Capped SWIX component via linear regression and comparing raw
+versus residual pairwise correlations, we isolate whether ABC Fund moves
+on independent, idiosyncratic return drivers or simply follows the
+broader active-manager herd.
 
 ``` r
 wide  <- to_wide(df)
@@ -1420,6 +1531,13 @@ driver_plot
 ![](Readme_files/figure-gfm/driver-plot-1.png)<!-- -->
 
 ## 4. Relative performance over time
+
+Full-sample return averages can easily hide multi-year stretches of
+mediocrity masked by a single standout period. Plotting ABC Fund’s
+rolling 36-month excess returns across a peer percentile fan
+chart—paired with a calendar-year rank heatmap—tests the consistency and
+repeatability of outperformance across shifting market cycles rather
+than relying on point-in-time snapshots.
 
 ``` r
 ex <- rolling_excess(df, win)
@@ -1541,6 +1659,13 @@ Note: if `anon` is TRUE the ABC row keeps its name, so the
 gets anonymised, adjust accordingly.
 
 ## 5. Does ABC do well when dispersion is high?
+
+Active skill requires opportunity—when cross-sectional return dispersion
+across funds widens, the spread between winners and losers expands.
+Conditioning ABC Fund’s monthly outperformance on peer dispersion and
+comparing its regression slope against the entire peer universe directly
+tests whether ABC converts wider opportunity sets into genuine relative
+alpha.
 
 ``` r
 panel <- dispersion_panel(df, min_n)
@@ -1885,6 +2010,15 @@ slopes_plot
 
 ![](Readme_files/figure-gfm/unnamed-chunk-41-1.png)<!-- -->
 
+## Drawdowns
+
+Strong rolling excess returns are difficult for clients to stay invested
+through if a fund suffers severe peak-to-trough losses during market
+sell-offs. Tracking cumulative high-water-mark drawdowns for ABC Fund
+alongside the Capped SWIX evaluates downside resilience, showing whether
+ABC cushions capital during systemic stress or amplifies benchmark
+troughs.
+
 ``` r
 # Compute cumulative wealth index and drawdown series for ABC Fund and Capped SWIX
 dd_df <- df %>%
@@ -1954,6 +2088,18 @@ list(`1_beta` = beta_plot, `2_r2` = r2_plot, `3_drivers` = driver_plot, `4_fan` 
     ## (`geom_segment()`).
 
 # Question 4
+
+## Data Harmonisation and Return Imputation
+
+Combining global equities, local vanilla and factor indices, 10-year
+global bond yields, domestic yield proxies, and commodities requires
+converting daily total return indices and bond yields onto a unified
+monthly return grid. Because multi-asset histories often have staggered
+inception dates, imputing missing values by drawing from each asset’s
+own empirical return distribution preserves individual volatility and
+tail properties without artificially distorting cross-asset
+correlations, while defining a dense grid of risk-aversion parameters
+($\gamma$) sets up the frontier search.
 
 ``` r
 Q4_data <- bind_rows(
@@ -2040,6 +2186,16 @@ tickers
 gamma_List <- seq(2, 150, by = 0.5) %>% as.list()
 ```
 
+## Asset Class, Regional, and REIT Classification
+
+Institutional multi-asset mandates enforce strict asset-class and
+offshore exposure caps, so every ticker must map unambiguously to a
+single bucket before building linear constraints. Explicitly routing
+local property and REIT proxies into Equities rather than Bonds ensures
+their equity-like drawdown and volatility behaviour is properly governed
+by the equity cap, while automated audit checks guarantee that zero
+unclassified assets slip through.
+
 ``` r
 # Helper to safely extract unique tickers regardless of whether column is Ticker, Tickers, or Name
 get_tickers <- function(df) {
@@ -2090,6 +2246,20 @@ all.equal(sum(is_bond + is_equity + is_comm), length(tickers))
 ```
 
     ## [1] TRUE
+
+## Canonical Alignment, Mandate Constraints, and Covariance Shrinkage
+
+Extending the raw return history back to 2010 ensures a full 10-year
+(120-month) rolling estimation window is available by the start of the
+2020 out-of-sample test period. Enforcing strict canonical ordering
+across the return matrix, asset metadata, and constraint matrices (Amat
+and bvec) prevents silent indexing mismatches, while applying
+Ledoit-Wolf shrinkage to the covariance matrix reduces estimation noise
+across the multi-asset universe. Simultaneously, encoding long-only
+bounds, a 60-month minimum track-record gate, a 35% single-asset cap,
+and aggregate mandate limits (Bonds capped at 25%, Equities at 75%,
+Commodities at 15%, and Global assets at 60%) translates the investment
+policy statement directly into quadratic programming constraints.
 
 ``` r
 # 1. Start at 2010-01-31 so a 10-year (120-month) lookback covers 2020–2026 out-of-sample
@@ -2150,6 +2320,16 @@ Sigma <- RiskPortfolios::covEstimation(return_mat_NO_DATE, control = list(type =
 mu    <- colMeans(return_mat_NO_DATE, na.rm = TRUE)
 ```
 
+\##Tracing the Constrained Frontier and Strategy Benchmarks
+
+Solving the mean-variance objective across the $\gamma$ grid maps out
+the full constrained efficient frontier and isolates three distinct
+reference points: Minimum Volatility (MinVol), Moderate Mean-Variance
+($\gamma = 5$), and Maximum Sharpe (Max_Sharpe). Adding a constrained
+Equal Risk Contribution (ERC) portfolio—projected onto the same feasible
+mandate set via quadratic programming—provides a purely risk-based
+benchmark that avoids relying on noisy historical mean return estimates.
+
 ``` r
 # ==============================================================================
 # 1A. TRACE THE CONSTRAINED EFFICIENT FRONTIER OVER YOUR gamma_List
@@ -2194,9 +2374,9 @@ static_weights_df %>%
     ## # A tibble: 3 × 5
     ##   Asset_Class MinVol Max_Sharpe MV_Gamma5   ERC
     ##   <chr>        <dbl>      <dbl>     <dbl> <dbl>
-    ## 1 Bonds         0.25      0.190     0.100 0.25 
-    ## 2 Commodities   0.15      0.15      0.15  0.134
-    ## 3 Equities      0.6       0.660     0.75  0.616
+    ## 1 Bonds         0.25       0.25      0.1  0.25 
+    ## 2 Commodities   0.15       0.15      0.15 0.132
+    ## 3 Equities      0.6        0.6       0.75 0.618
 
 ``` r
 static_weights_df %>%
@@ -2207,24 +2387,32 @@ static_weights_df %>%
     ## # A tibble: 2 × 5
     ##   Region MinVol Max_Sharpe MV_Gamma5   ERC
     ##   <chr>   <dbl>      <dbl>     <dbl> <dbl>
-    ## 1 Global    0.6      0.435     0.466   0.6
-    ## 2 Local     0.4      0.565     0.534   0.4
+    ## 1 Global    0.6      0.517     0.589 0.600
+    ## 2 Local     0.4      0.483     0.411 0.4
 
 ``` r
 write_rds(static_weights_df, "Questions/Question 4/data/static_weights_df.rds")
 ```
 
-This wraps your exact Sigma, means vector Amat and bvec solver into a
-quarterly-rebalanced out-of-sample simulation (by = 3 months, minimum
-120-month lookback), tracking intra-quarter weight drift, quarterly
-turnover, and net-of-cost performance (15 bps transaction cost).
+## Quarterly Out-of-Sample Rolling Backtest
+
+In-sample efficient frontiers notoriously overfit historical sample
+means and look artificially attractive on paper. Wrapping the
+Ledoit-Wolf covariance estimator, expected return vector, and constraint
+solver into a quarterly-rebalanced simulation (using a 120-month rolling
+lookback) tests how each strategy performs out-of-sample while
+realistically accounting for intra-quarter weight drift, rebalancing
+turnover, and a 15 bps transaction cost drag.
 
 ``` r
 bt_results <- run_quarterly_backtest(return_mat_raw, Amat, b_eq, b_lb, b_grp, lookback_min = 120)
 ```
 
-Some analytics Tables How did the Portfolio perform outside the sample
-period?
+## Some analytics
+
+### Tables
+
+#### How did the Portfolio perform outside the sample period?
 
 ``` r
 #  OUT-OF-SAMPLE PERFORMANCE, TURNOVER & EFFECTIVE DIVERSIFICATION (N_EFF)
@@ -2276,14 +2464,23 @@ oos_summary_table
     ## # A tibble: 4 × 7
     ##   Strategy  Ann_Ret_Gross Ann_Ret_Net Ann_Vol Sharpe_Net Max_Drawdown Avg_Qtr_TO
     ##   <chr>             <dbl>       <dbl>   <dbl>      <dbl>        <dbl>      <dbl>
-    ## 1 ERC                8.84        8.83    12.1      0.267         28.4       4.07
-    ## 2 MV_Gamma5         10.9        10.9     13.8      0.386         27.7      20.3 
-    ## 3 Max_Shar…         10.1         9.99    13.2      0.337         28.8      17.8 
-    ## 4 MinVol             8.35        8.32    11.6      0.232         23.9       8.69
+    ## 1 ERC                8.44        8.42    12.1      0.236         28.8       4.03
+    ## 2 MV_Gamma5         10.5        10.4     13.7      0.358         28.1      20.3 
+    ## 3 Max_Shar…          9.64        9.58    13.1      0.308         29.3      17.8 
+    ## 4 MinVol             7.95        7.91    11.5      0.200         24.4       8.65
 
 ``` r
 write_rds(as.data.frame(oos_summary_table), "Questions/Question 4/data/oos_summary_table.rds")
 ```
+
+#### Capital Weights vs. True Risk Contribution
+
+Nominal portfolio weights often create an illusion of diversification
+when high-volatility assets dominate aggregate variance. Aggregating
+average capital weights alongside marginal risk contributions by asset
+class exposes how heavily equities drive total portfolio risk under
+mean-variance rules compared to risk-parity and minimum-variance
+constructions.
 
 ``` r
 # 3B. CAPITAL WEIGHTS VS. TRUE RISK CONTRIBUTION BY ASSET CLASS
@@ -2315,6 +2512,14 @@ risk_budget_table
 ``` r
 write_rds(risk_budget_table, "Questions/Question 4/data/risk_budget_table.rds")
 ```
+
+\####Macro Regime Stress Attribution Full-period backtest averages can
+mask severe vulnerabilities during structural market shifts—particularly
+when equities and bonds sell off simultaneously. Partitioning the
+out-of-sample window into the 2020 COVID shock, the 2022 inflation and
+rate-hiking cycle, and the post-2023 normalisation phase isolates how
+each allocation rule handles acute equity drawdowns versus rate-driven
+fixed-income losses.
 
 ``` r
 #  REGIME STRESS ATTRIBUTION (2020 COVID VS. 2022 RATE SHOCK VS. POST-2023)
@@ -2350,7 +2555,15 @@ regime_table
 write_rds(regime_table, "Questions/Question 4/data/regime_table.rds")
 ```
 
-Figures
+### Figures
+
+\####Visualising the Frontier, Compounding Wealth, and Risk Budgets
+Finally, pairing the constrained efficient frontier with out-of-sample
+cumulative wealth paths and stacked risk-budget charts connects ex-ante
+portfolio theory to ex-post lived performance—showing where each
+strategy sits on the theoretical risk-return curve, how smoothly it
+compounds net of fees, and whether its underlying risk exposure aligns
+with a balanced mandate.
 
 ``` r
 # 1. Constrained Mean-Variance Efficient Frontier (from your gamma_List)
@@ -2379,9 +2592,9 @@ tibble(
     ##    <chr>                  <dbl>   <dbl>       <dbl>
     ##  1 GTFRF10Y Corp          3.39   10.1      -47.2   
     ##  2 GTGBP10Y Corp          0.405   0.951     -0.0465
-    ##  3 STXVALJ433             0.195   0.173      0.180 
-    ##  4 STXMOMJ433             0.170   0.173      0.155 
-    ##  5 GTUSD10Y Govt          0.153   0.390      0.0774
+    ##  3 STXVALJ433             0.158   0.169      0.144 
+    ##  4 GTUSD10Y Govt          0.153   0.390      0.0774
+    ##  5 STXMOMJ433             0.151   0.166      0.137 
     ##  6 MXWOMOM Index          0.148   0.157      0.135 
     ##  7 MXWO000G Index         0.143   0.164      0.130 
     ##  8 MXUS Index             0.141   0.151      0.129 
