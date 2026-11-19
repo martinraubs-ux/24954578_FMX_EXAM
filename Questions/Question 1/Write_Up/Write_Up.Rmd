@@ -245,7 +245,7 @@ knitr::include_graphics("figures/prop_var.png")
 ```
 
 
-- At the latest rebalance, PC1 accounts for about 88% of portfolio variance and PC3 about 7%. Every other component is 2% or less.
+- At the latest rebalance, PC1 accounts for about 60% of portfolio variance and PC3 about 25%.
 
 ```{r}
 knitr::include_graphics("figures/screeplot.png")
