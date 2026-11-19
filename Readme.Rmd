@@ -499,7 +499,7 @@ Stock_RC %>%
 
 ```{r}
 # Weight vs share of risk, top 15 risk contributors:
-Stock_RC %>%
+top15rc <- Stock_RC %>%
   slice_max(Risk_Contribution, n = 15) %>%
   select(Tickers, Weight, Risk_Contribution) %>%
   pivot_longer(-Tickers, names_to = "Measure", values_to = "Share") %>%
@@ -510,6 +510,8 @@ Stock_RC %>%
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(title = "SafeCore: weight vs share of portfolio variance", x = "", y = "") +
   fmxdat::theme_fmx() + fmxdat::fmx_fills()
+top15rc
+ggsave("figures/q1partB/top15rc.png", plot = top15rc, width = 8, height = 5, dpi = 300)
 ```
 
 ```{r}
