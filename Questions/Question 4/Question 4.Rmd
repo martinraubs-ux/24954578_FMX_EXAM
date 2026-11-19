@@ -3,7 +3,7 @@
 # Remove comments and add values where applicable.
 # The descriptions below should be self-explanatory
 
-title: "Helping You Write Academic Papers in R using Texevier"
+title: "Constructing a global balanced fund"
 #subtitle: "This will appear as Right Header"
 
 documentclass: "elsarticle"
@@ -25,23 +25,23 @@ Thesis_FP: FALSE
 # --------- Front Page
 # Comment: ----- Follow this pattern for up to 5 authors
 AddTitle: TRUE # Use FALSE when submitting to peer reviewed platform. This will remove author names.
-Author1: "Jane Doe^[__Contributions:__  \\newline _The authors would like to thank no institution for money donated to this project. Thank you sincerely._]"  # First Author - note the thanks message displayed as an italic footnote of first page.
-Ref1: "Some Institution, Cape Town, South Africa" # First Author's Affiliation
-Email1: "nfkatzke\\@gmail.com" # First Author's Email address
+Author1: "Martin Raubenheimer 24954578 "  # First Author - note the thanks message displayed as an italic footnote of first page.
+Ref1: "Department of Economics, Stellenbosch University, South Africa" # First Author's Affiliation
+Email1: "martinraubs\\@gmail.com" # First Author's Email address
 
-Author2: "John Smith"
-Ref2: "Some other Institution, Cape Town, South Africa"
-Email2: "John\\@gmail.com"
-CommonAffiliation_12: TRUE # If Author 1 and 2 have a common affiliation. Works with _13, _23, etc.
+#Author2: "John Smith"
+#Ref2: "Some other Institution, Cape Town, South Africa"
+#Email2: "John\\@gmail.com"
+#CommonAffiliation_12: TRUE # If Author 1 and 2 have a common affiliation. Works with _13, _23, etc.
 
-Author3: "John Doe"
-Email3: "Joe\\@gmail.com"
+#Author3: "John Doe"
+#Email3: "Joe\\@gmail.com"
 
-CorrespAuthor_1: TRUE  # If corresponding author is author 3, e.g., use CorrespAuthor_3: TRUE
+#CorrespAuthor_1: TRUE  # If corresponding author is author 3, e.g., use CorrespAuthor_3: TRUE
 
 # Comment out below to remove both. JEL Codes only given if keywords also given.
-keywords: "Multivariate GARCH \\sep Kalman Filter \\sep Copula" # Use \\sep to separate
-JELCodes: "L250 \\sep L100"
+#keywords: "Multivariate GARCH \\sep Kalman Filter \\sep Copula" # Use \\sep to separate
+#JELCodes: "L250 \\sep L100"
 
 # ----- Manage headers and footers:
 #BottomLFooter: $Title$
@@ -91,8 +91,8 @@ output:
     template: Tex/TexDefault.txt
     fig_width: 3.5 # Adjust default figure sizes. This can also be done in the chunks of the text.
     fig_height: 3.5
-abstract: |
-  Abstract to be written here. The abstract should not be too long and should provide the reader with a good understanding what you are writing about. Academic papers are not like novels where you keep the reader in suspense. To be effective in getting others to read your paper, be as open and concise about your findings here as possible. Ideally, upon reading your abstract, the reader should feel he / she must read your paper in entirety.
+#abstract: |
+ # Abstract to be written here. The abstract should not be too long and should provide the reader with a good understanding what you are writing about. Academic papers are not like novels where you keep the reader in suspense. To be effective in getting others to read your paper, be as open and concise about your findings here as possible. Ideally, upon reading your abstract, the reader should feel he / she must read your paper in entirety.
 ---
 
 <!-- First: Set your default preferences for chunk options: -->
@@ -118,123 +118,123 @@ static_weights_df <- readRDS("data/static_weights_df.rds")
 <!-- ############################## -->
 
 # Introduction \label{Introduction}
+Constructing a Global Balanced Index Fund requires balancing long-term capital growth against downside protection while operating within strict asset-class, single-issuer, and geographic concentration limits. In accordance with the investment mandate, we design a long-only, quarterly-rebalanced portfolio optimization framework evaluated at a monthly frequency using post-2010 return data and an expanding lookback window of at least ten years ($T \ge 120$ months). To eliminate survivorship and look-ahead bias, assets with fewer than five years (60 months) of observed return history at any given rebalance date are dynamically excluded, while eligible holdings are governed by hard upper bounds on single-asset exposure ($\le 35\%$), Bonds and credit instruments ($\le 25\%$), Equities ($\le 75\%$), Commodities ($\le 15\%$), and total offshore Global exposure ($\le 60\%$).Rather than relying on a single optimization rule that may prove sensitive to estimation error in expected returns, we conduct a multi-perspective empirical horse race across four distinct construction philosophies under identical linear constraints: (i) Minimum Variance (MinVol), (ii) Moderate Mean-Variance (MV_Gamma5, $\gamma = 5$), (iii) Maximum Sharpe Ratio (Max_Sharpe), and (iv) Constrained Equal Risk Contribution (ERC). After standardizing all global and local instruments to calendar month-end returns—including synthetic 10-year constant-maturity sovereign bond Total Return Indices (TRIs) engineered from yield-to-maturity series—we evaluate both full-sample policy allocations and an out-of-sample quarterly-rebalanced backtest net of 15 bps transaction costs, supplemented by risk-budget decompositions and macro-regime stress attribution.
 
+# Local Factor Selection
+LargeCaps, MidCaps, Momentum and Value vanilla indexes was chose  o capture counter-cyclical style premia within the mandatory $\ge 40\%$ local sleeve.
 
-```{r}
-# ==============================================================================
-# TABLE 1: OUT-OF-SAMPLE PERFORMANCE, TURNOVER & DRAWDOWN SUMMARY
-# ==============================================================================
-# Note: Your oos_summary_table values are already in percentage units (e.g., 10.7 = 10.7%)
-tex_perf <- oos_summary_table %>%
-  transmute(
-    Strategy             = recode(Strategy,
-                                  "MV_Gamma5"  = "Mean-Variance ($\\gamma = 5$)",
-                                  "Max_Sharpe" = "Max Sharpe (Tangency)",
-                                  "MinVol"     = "Minimum Variance",
-                                  "ERC"        = "Equal Risk Contribution"),
-    `Gross Ret. (\\%)`   = sprintf("%.2f", Ann_Return_Gross),
-    `Net Ret. (\\%)`     = sprintf("%.2f", Ann_Return_Net),
-    `Ann. Vol. (\\%)`    = sprintf("%.2f", Ann_Volatility),
-    `Net Sharpe`         = sprintf("%.3f", Sharpe_Net),
-    `Max DD (\\%)`       = sprintf("-%.2f", abs(Max_Drawdown)),
-    `Avg. Qtr. TO (\\%)` = sprintf("%.2f", Avg_Quarterly_TO),
-    `Avg_N_Eff (\\%)` = sprintf("%.2f", Avg_N_Eff),
-    
-  )
+# In-Sample Efficient Frontier & Policy Constraint Diagnostics
+Tracing the constrained quadratic program across risk-aversion parameters $\gamma \in [2, 150]$ yields a well-behaved concave frontier spanning annualized expected returns of roughly $11\%$ to $25\%$ (Figure \ref{fig:p_frontier}). As summarized in Table \ref{tab:q4_static}, all full-sample allocations strictly respect the mandate's asset-class and geographic boundaries while revealing which limits actively bind:Geographic Binding: The 60.0% Global cap binds in MinVol, MV_Gamma5, and ERC, confirming strong optimizer demand for offshore diversification, whereas Max_Sharpe tilts 53.9% Local / 46.1% Global to capture higher nominal South African yields.Asset-Class Trade-Offs: Defensive MinVol saturates both the 25.0% Bond and 15.0% Commodity caps to dampen equity volatility, while growth-oriented MV_Gamma5 pushes Equities to the 75.0% ceiling.
 
-
-render_tex_table(
-  tex_perf,
-  caption_txt = "Out-of-Sample Quarterly Rebalanced Performance (Net of 15 bps Transaction Costs)",
-  label_txt   = "tab:q4_oos_perf"
-)
+```{r p_frontier, fig.cap="Efficient Frontier"}
+knitr::include_graphics("figures/p_frontier.png")
 ```
 
-```{r}
-# ==============================================================================
-# TABLE 2: CAPITAL WEIGHTS VS. PERCENTAGE RISK CONTRIBUTION BY ASSET CLASS
-# ==============================================================================
-tex_risk_budget <- risk_budget_table %>%
-  transmute(
-    `Asset Class`    = Asset_Class,
-    `MinVol`         = percent(W_MinVol,  accuracy = 0.1),
-    `MV ($\\gamma=5$)`= percent(W_MV5,     accuracy = 0.1),
-    `Max Sharpe`     = percent(W_MaxSR,   accuracy = 0.1),
-    `ERC`            = percent(W_ERC,     accuracy = 0.1),
-    `MinVol `        = percent(RC_MinVol, accuracy = 0.1), # Trailing space avoids duplicate col names
-    `MV ($\\gamma=5$) `= percent(RC_MV5,  accuracy = 0.1),
-    `Max Sharpe `    = percent(RC_MaxSR,  accuracy = 0.1),
-    `ERC `           = percent(RC_ERC,    accuracy = 0.1)
-  )
+```{r q4_static}
+# --- TABLE 4: Combined Static Allocations (Asset Class & Region) ---
+static_ac <- static_weights_df %>%
+  group_by(Bucket = Asset_Class) %>%
+  summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum), .groups = "drop")
 
-render_tex_table(
-  tex_risk_budget,
-  caption_txt  = "Average Quarterly Capital Allocation vs. Portfolio Risk Contribution",
-  label_txt    = "tab:q4_risk_budget",
-  header_above = c(" " = 1, "Capital Weights (\\%)" = 4, "Risk Contribution (\\%)" = 4)
-)
-```
+static_reg <- static_weights_df %>%
+  group_by(Bucket = Region) %>%
+  summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum), .groups = "drop")
 
-
-```{r}
-# ==============================================================================
-# TABLE 3: MACRO REGIME STRESS ATTRIBUTION (CUMULATIVE NET RETURNS)
-# ==============================================================================
-tex_regime <- regime_table %>%
-  transmute(
-    `Macro Regime`        = Regime,
-    `Minimum Variance`    = percent(MinVol,     accuracy = 0.1),
-    `MV ($\\gamma = 5$)`  = percent(MV_Gamma5,  accuracy = 0.1),
-    `Max Sharpe`          = percent(Max_Sharpe, accuracy = 0.1),
-    `ERC`                 = percent(ERC,        accuracy = 0.1)
-  )
-
-render_tex_table(
-  tex_regime,
-  caption_txt = "Out-of-Sample Cumulative Net Returns Across Macro Regimes",
-  label_txt   = "tab:q4_regimes"
-)
-```
-
-
-```{r}
-# ==============================================================================
-# TABLE 4: STATIC FULL-SAMPLE POLICY ALLOCATIONS (CLASS & REGION AUDIT)
-# ==============================================================================
-tex_static_combined <- bind_rows(
-  static_weights_df %>%
-    group_by(Category = Asset_Class) %>%
-    summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum), .groups = "drop") %>%
-    mutate(Dimension = "Asset Class"),
-  static_weights_df %>%
-    group_by(Category = Region) %>%
-    summarise(across(c(MinVol, Max_Sharpe, MV_Gamma5, ERC), sum), .groups = "drop") %>%
-    mutate(Dimension = "Geography")
-) %>%
-  transmute(
-    Dimension,
-    Category,
-    `Minimum Variance`   = percent(MinVol,     accuracy = 0.1),
-    `MV ($\\gamma = 5$)` = percent(MV_Gamma5,  accuracy = 0.1),
-    `Max Sharpe`         = percent(Max_Sharpe, accuracy = 0.1),
-    `ERC`                = percent(ERC,        accuracy = 0.1)
-  )
-
-tex_static_combined %>%
-  select(-Dimension) %>%
-  kable(
-    format   = "latex",
-    booktabs = TRUE,
-    caption  = "Full-Sample Static Policy Allocations by Asset Class and Geography \\label{tab:q4_static}",
-    align    = c("l", rep("r", 4)),
-    linesep  = ""
+bind_rows(static_ac, static_reg) %>%
+  mutate(across(-Bucket, ~ sprintf("%.1f%%", . * 100))) %>%
+  kbl(
+    caption = "Static Full-Sample Asset Class and Regional Allocations",
+    col.names = c("Allocation Bucket", "MinVol", "Max_Sharpe", "MV_Gamma5", "ERC"),
+    align = c("l", rep("r", 4)),
+    booktabs = TRUE
   ) %>%
-  pack_rows("Panel A: Asset Class Limits (Bonds <= 25%, Commods <= 15%, Equities <= 75%)", 1, 3) %>%
-  pack_rows("Panel B: Geographic Limits (Global <= 60%, Local >= 40%)", 4, 5) %>%
-  kable_styling(latex_options = c("HOLD_position"), font_size = 9)
+  pack_rows("Asset Class", 1, 3) %>%
+  pack_rows("Region", 4, 5) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE)
+```
+
+# Out-of-Sample Rolling Backtest and Turnover Friction
+Evaluating the strategies out-of-sample with quarterly rebalancing ($\ge 120$-month expanding lookback) and 15 bps transaction costs highlights a clear trade-off between return efficiency and trading friction (Table \ref{tab:q4_oos_perf} and Figure \ref{fig:p4_oos_wealth}). MV_Gamma5 delivers the strongest risk-adjusted performance with a 10.70% net annualized return and 0.376 Net Sharpe ratio, outperforming Max_Sharpe (9.84% net return; 0.327 Sharpe) because stronger variance regularization curbs sensitivity to noisy trailing sample means.However, return-seeking optimizers incur substantial implementation drag: MV_Gamma5 (20.30% quarterly turnover) and Max_Sharpe (17.80%) forfeit 6–10 bps annually to transaction costs. By contrast, ERC achieves exceptional portfolio stability (4.06% quarterly turnover, preserving 8.68% of its 8.69% gross return), while MinVol provides superior capital preservation with the lowest volatility (11.50%) and shallowest maximum drawdown (-23.80%).
+
+```{r p4_oos_wealth, fig.cap= "oos wealth"}
+
+knitr::include_graphics("figures/p_oos_wealth.png")
+```
+
+```{r q4_oos_perf}
+# Step 1: Save the raw numeric tibble first (after re-creating it)
+write_rds(oos_summary_table, "data/oos_summary_table.rds")
+
+# Step 2: Format and print without overwriting oos_summary_table
+ oos_summary_table %>%
+  mutate(
+    across(
+      c(Ann_Ret_Gross, Ann_Ret_Net, Ann_Vol, Max_Drawdown, Avg_Qtr_TO),
+      ~ sprintf("%.2f%%", . * 1)
+    ),
+    Sharpe_Net = sprintf("%.3f", Sharpe_Net)
+  ) %>%
+  kbl(
+    caption = "Out-of-Sample Portfolio Performance Summary (Net of 15 bps Quarterly Rebalancing Costs)",
+    col.names = c("Strategy", "Gross Ret.", "Net Ret.", "Ann. Vol.", "Net Sharpe", "Max DD", "Avg. Qtr TO"),
+    align = c("l", rep("r", 7)),
+    booktabs = TRUE
+  ) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE)
+
+
 ```
 
 
+#Risk Budgeting and Macro Regime Stress Attribution
+Decomposing average quarterly allocations into percentage variance contributions (Table \ref{tab:q4_risk_budget} and Figure \ref{fig:q4-risk-comp}) exposes significant risk concentration beneath seemingly balanced capital weights. Even when MinVol and ERC hold roughly 58.5%–60.3% in Equities, Equities still generate 70.4%–72.4% of total portfolio variance. More striking is the hidden duration risk inside MV_Gamma5: its 25.9% fixed-income allocation accounts for 43.2% of total portfolio risk due to heavy concentration in long-duration sovereign bonds, while its near-zero Commodity weight (1.0%) removes inflation protection.
+
+Macro regime attribution (Table \ref{tab:q4_regimes}) confirms how these risk exposures behave under stress:
+
+2020 COVID Shock: Sovereign bond rallies cushioned equity losses, allowing Max_Sharpe (-4.0%) and MV_Gamma5 (-4.5%) to outperform ERC (-7.4%).
+
+2022 Inflation & Rate-Hiking Shock: Simultaneous equity and bond sell-offs punished Max_Sharpe (-6.8%), whereas ERC (-2.2%) and MinVol (-2.3%) proved far more resilient thanks to their 12.9%–14.7% Commodity sleeves, before ERC led the subsequent recovery (+141.0%).
+
+```{r q4_risk_budget}
+
+# --- TABLE 2: Average Weights & Risk Contributions ---
+risk_budget_table %>%
+  mutate(across(-Asset_Class, ~ sprintf("%.1f%%", . * 100))) %>%
+  kbl(
+    caption = "Average Portfolio Weights and Percentage Risk Contributions by Asset Class",
+    col.names = c("Asset Class", "MinVol", "MV5", "MaxSR", "ERC", "MinVol", "MV5", "MaxSR", "ERC"),
+    align = c("l", rep("r", 8)),
+    booktabs = TRUE
+  ) %>%
+  add_header_above(c(" " = 1, "Average Weight" = 4, "Risk Contribution" = 4)) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE)
+```
+
+```{r q4-risk-comp, fig.cap="Risk comp"}
+knitr::include_graphics("figures/p_risk_comp.png")
+```
+
+
+```{r q4_regimes}
+
+# --- TABLE 3: Macro Regime Performance ---
+regime_table %>%
+  mutate(across(-Regime, ~ sprintf("%.2f%%", . * 100))) %>%
+  kbl(
+    caption = "Cumulative Strategy Returns Across Macro Regimes",
+    col.names = c("Market Regime", "ERC", "MV_Gamma5", "Max_Sharpe", "MinVol"),
+    align = c("l", rep("r", 4)),
+    booktabs = TRUE
+  ) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE)
+
+
+```
+
+# Conclusion
+Out-of-sample testing confirms a clear trade-off between return-seeking mean-variance optimization and pure risk-based allocation: MV_Gamma5 delivers the strongest risk-adjusted growth (10.70% net annualized return and a 0.376 Net Sharpe ratio), outperforming unregularized tangency optimization (Max_Sharpe, 0.327 Net Sharpe) by curbing sensitivity to noisy sample return forecasts. Conversely, MinVol provides superior capital preservation (11.50% volatility and a -23.80% maximum drawdown), while ERC achieves exceptional portfolio stability (4.06% average quarterly turnover) and leads cumulative performance during the post-2022 recovery (+141.0%).
+
+Furthermore, decomposing capital allocations into true variance contributions reveals that nominal policy weights can obscure underlying risk concentrations—most notably in MV_Gamma5, where a 25.9% fixed-income allocation accounts for 43.2% of portfolio risk, and where near-zero Commodity exposure leaves the fund vulnerable during inflationary rate shocks such as 2022. For an institutional mandate prioritizing Sharpe maximization, MV_Gamma5 is recommended; however, for a balanced fiduciary mandate seeking smoother drawdowns, inflation hedging, and minimal trading friction, a 50/50 strategic blend of MV_Gamma5 and ERC captures the upside of mean-variance optimization while preserving the commodity ballast and low turnover of risk parity. Future refinements could incorporate Bayes-Stein or Black-Litterman expected-return shrinkage and explicit USD/ZAR currency-hedging overlays to further stabilize offshore return attribution.
 
 
 
@@ -244,13 +244,4 @@ tex_static_combined %>%
 
 
 
-
-
-# Appendix {-}
-
-## Appendix A {-}
-
-Some appendix information here
-
-## Appendix B {-}
 
